@@ -31,11 +31,16 @@ bazel run   //examples/blinky:blinky.schematic  # interactive block diagram
   in `nix/atopile.nix`); keep it in range of each project's `requires-atopile`.
   Re-pin `venvHash` with `venvHash = lib.fakeHash;` → `nix build .#atopile` → paste
   the reported hash. The venv FOD is reproducible, so the pin holds.
-- KiCad comes from `kicad-small` (CLI + no 3D models). Its footprint `.pretty`
-  libraries are a separate package (`kicad.libraries.footprints`); the atopile
-  derivation bakes a **stock `fp-lib-table`** from them at
-  `<atopile>/share/atopile/stock-fp-lib-table`, and the build rules drop it into a
-  project's `elec/layout/<build>/fp-lib-table` (gitignored — it embeds store URIs).
+- KiCad comes from `kicad-small` on Linux (CLI + no 3D models); on macOS nixpkgs
+  KiCad is broken, so atopile uses the **system** `/Applications/KiCad.app`
+  `kicad-cli` (see rules doc §9). Footprint `.pretty` libraries come from nix on
+  both (`kicad.libraries.footprints`); the atopile derivation bakes a **stock
+  `fp-lib-table`** at `<atopile>/share/atopile/stock-fp-lib-table`, which the
+  build rules drop into a project's `elec/layout/<build>/fp-lib-table`.
+- `venvHash` is **per-platform** (`venvHashBySystem` in `nix/packages.nix`) —
+  re-pin each system's entry independently. Verified on aarch64-linux + -darwin.
+- Bazel builds run in a private temp copy of the project (no `build/`·`elec/layout`
+  written into your checkout); the nix toolchain is split `nix_linux`/`nix_darwin`.
 - Two behaviours are patched into the atopile venv (see `nix/atopile.nix`): the
   empty part-pick query no longer hits the network (so all-local designs build
   offline), and the `ato` wrapper sets `OPENSSL_armcap=0` (aarch64 crypto SIGILL

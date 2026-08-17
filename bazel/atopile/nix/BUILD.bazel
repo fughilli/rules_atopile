@@ -1,17 +1,29 @@
 """Hermetic atopile toolchain backed by rules_nixpkgs.
 
-Only loaded when you opt into the Nix toolchain (see MODULE.bazel: uncomment the
-`nix_pkg`/`register_toolchains` lines). It references the `@atopile` and `@kicad`
-repositories produced by rules_nixpkgs, so this package will fail to load unless
-those repos exist — which is why it lives here and not in the parent BUILD.
+References the `@atopile` (and, on Linux, `@kicad`) repositories produced by
+rules_nixpkgs, so this package fails to load unless those repos exist — which is
+why it lives here and not in the parent BUILD.
+
+Two exec-platform-specific flavours share the `@atopile` compiler (which builds
+on both Linux and macOS):
+
+  * nix_linux  — `kicad-cli` from the nixpkgs `@kicad` (kicad-small).
+  * nix_darwin — nixpkgs marks the KiCad *application* broken on aarch64-darwin,
+                 so we DON'T reference `@kicad` there (it would fail to fetch);
+                 `kicad-cli` comes from the system KiCad.app, which atopile's own
+                 `find_kicad_cli` also expects. Selecting nix_darwin by
+                 `exec_compatible_with` keeps `@kicad` out of the macOS graph.
 """
 
 load("//bazel/atopile:toolchain.bzl", "atopile_toolchain")
 
 package(default_visibility = ["//visibility:public"])
 
+# Standard macOS KiCad.app CLI location (same path atopile's find_kicad_cli globs).
+DARWIN_KICAD_CLI = "/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli"
+
 atopile_toolchain(
-    name = "nix",
+    name = "nix_linux",
     # rules_nixpkgs exposes individual files of a package by their store path.
     ato = "@atopile//:bin/ato",
     kicad_cli = "@kicad//:bin/kicad-cli",
@@ -22,8 +34,25 @@ atopile_toolchain(
     ],
 )
 
+atopile_toolchain(
+    name = "nix_darwin",
+    ato = "@atopile//:bin/ato",
+    # No `kicad_cli` File (nixpkgs KiCad is broken on darwin) — invoke the system
+    # KiCad.app by absolute path. atopile's own kicad-cli lookup finds it too.
+    kicad_cli_path = DARWIN_KICAD_CLI,
+    data = ["@atopile//:bin"],
+)
+
 toolchain(
-    name = "nix_toolchain",
-    toolchain = ":nix",
+    name = "nix_toolchain_linux",
+    exec_compatible_with = ["@platforms//os:linux"],
+    toolchain = ":nix_linux",
+    toolchain_type = "//bazel/atopile:toolchain_type",
+)
+
+toolchain(
+    name = "nix_toolchain_darwin",
+    exec_compatible_with = ["@platforms//os:macos"],
+    toolchain = ":nix_darwin",
     toolchain_type = "//bazel/atopile:toolchain_type",
 )

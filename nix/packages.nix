@@ -4,38 +4,50 @@
 # rules_nixpkgs invokes .nix files with plain `import <nixpkgs>`, so this file
 # must work without flakes. It accepts an already-instantiated `pkgs`.
 { pkgs ? import <nixpkgs> { } }:
-rec {
-  # KiCad provides `kicad-cli`, which atopile calls for every export, plus the
-  # standard footprint/symbol libraries designs reference. `kicad-small` is the
-  # full CLI + libraries WITHOUT the multi-GB `kicad-packages3d` 3D models and
-  # docs: PDF/gerber export is 2D-only, so the 3D models are dead weight (and
-  # big enough to exhaust disk while building). Swap back to `pkgs.kicad` only
-  # if a build needs 3D export/render.
-  kicad = pkgs.kicad-small;
+let
+  inherit (pkgs) lib;
+  isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
 
-  # The stock footprint `.pretty` libraries. `kicad-small` drops the `libraries`
-  # passthru, so source them from the full `pkgs.kicad` (same nixpkgs pin, so
-  # same library version) and hand them to atopile for the stock fp-lib-table.
+  # KiCad provides `kicad-cli`, which atopile calls for every export. On Linux
+  # that's `kicad-small` (full CLI + libraries WITHOUT the multi-GB
+  # `kicad-packages3d` 3D models — PDF/gerber is 2D, and they're big enough to
+  # exhaust disk). On aarch64-darwin nixpkgs marks the KiCad *application* broken
+  # (a long-standing macOS build issue), so we can't build it — pass `null` and
+  # let atopile's `find_kicad_cli` use the system KiCad.app (/Applications/KiCad)
+  # instead. The footprint libraries (below) are a separate, non-broken package
+  # used on both platforms.
+  kicadApp = if isDarwin then null else pkgs.kicad-small;
+
+  # The venv compiles extensions wherever PyPI ships no wheel, so the resolved
+  # tree — and thus `venvHash` — is PER-PLATFORM. Keyed by system here.
+  venvHashBySystem = {
+    "aarch64-linux" = "sha256-9y20YAaYHBC8ot8GGgYr7rSr+kIKwpOpX6aBv295Idw=";
+    "aarch64-darwin" = "sha256-pEBefL1wFmBKdqf9wxmza8CBXF1Zand1Sf7Ix4bXMio=";
+  };
+  venvHash = venvHashBySystem.${pkgs.stdenv.hostPlatform.system} or lib.fakeHash;
+in
+rec {
+  # Exposed as `kicad` for the flake/devShell; null on darwin (system KiCad).
+  kicad = kicadApp;
+
+  # The stock footprint `.pretty` libraries — a SEPARATE data package
+  # (`kicad.libraries.footprints`), not the broken KiCad app, so it builds on
+  # both Linux and darwin. Handed to atopile for the stock fp-lib-table.
   kicad-footprints = pkgs.kicad.libraries.footprints;
 
   atopile = pkgs.callPackage ./atopile.nix {
-    inherit kicad;
+    kicad = kicadApp;
     kicadFootprints = kicad-footprints;
     # MUST pass python explicitly: `callPackage` would otherwise auto-fill the
     # `python` arg from `pkgs.python`, which in nixpkgs is an alias for Python
     # *2.7* (insecure, and unusable by uv) rather than the arg's `python313`
     # default. atopile 0.10.x wants 3.13.
     python = pkgs.python313;
-    # Pinned resolved-venv hash. Reproducible since 2026-08-15 (the determinism
-    # pass in atopile.nix strips sdist-build nondeterminism and removes the
-    # self-referential shebangs that used to make any pin drift — see the
-    # outputHash note there). To re-pin after a version bump, set this to
-    # lib.fakeHash, run `nix build .#atopile`, and paste the reported "got:" hash.
-    #
-    # PLATFORM-SPECIFIC (aarch64-linux): the venv compiles extensions wherever
-    # PyPI ships no wheel, so a repo also targeting e.g. aarch64-darwin must key
-    # venvHash by pkgs.stdenv.hostPlatform.system.
-    venvHash = "sha256-9y20YAaYHBC8ot8GGgYr7rSr+kIKwpOpX6aBv295Idw=";
+    # Pinned resolved-venv hash (per-platform; see venvHashBySystem above). To
+    # re-pin after a version bump, set the relevant entry to lib.fakeHash, run
+    # `nix build .#atopile`, and paste the reported "got:" hash. The venv FOD is
+    # reproducible (determinism pass in atopile.nix), so the pin holds.
+    inherit venvHash;
   };
 
   # Latest atopile (0.15.x). Requires Python >=3.14 (python314 is in the pinned

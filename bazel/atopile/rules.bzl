@@ -68,18 +68,30 @@ def _home_export():
     # dir. A per-action temp dir keeps builds from sharing KiCad state.
     return 'export HOME="${HOME:-$(mktemp -d)}"'
 
-def _fp_lib_table_setup(ctx):
-    # Explicit `component.footprint = "Lib:Name"` identifiers resolve ONLY against
-    # the project's fp-lib-table (atopile does not consult KiCad's global table),
-    # so seed it before building from the stock table the atopile derivation
-    # ships at <atopile>/share/atopile/stock-fp-lib-table. We locate it relative
-    # to the resolved `ato` binary (`$ATO`, set by _ato_setup) rather than as a
-    # Bazel input, because rules_nixpkgs' generated BUILD only exposes bin/lib/
-    # include — and these actions are `local`/`no-sandbox`, so the store path is
-    # readable directly. Works for both toolchains (nix: $ATO is an absolute
-    # store path; host: `command -v` resolves the devShell wrapper). The table
-    # embeds /nix/store URIs and is gitignored. atopile's default layout path is
-    # elec/layout/<build>/.
+def _root_setup(ctx):
+    # Build in a PRIVATE COPY of the project rather than in the source tree.
+    # These actions are `no-sandbox` (they need the network + the host nix), so
+    # without this every `ato build` would write build//elec/layout into the
+    # user's checkout AND concurrent sibling targets (e.g. .pdf and .gerber)
+    # would race on the same layout dir. Copy the project into a per-action temp
+    # dir and build there. `cp -RL` dereferences the execroot's source symlinks
+    # into real files; `$ROOT` is the isolated copy everything below operates on.
+    return "\n".join([
+        'SRC="$(cd "$(dirname "{ay}")" && pwd)"'.format(ay = ctx.file.ato_yaml.path),
+        'ROOT="$(mktemp -d)"',
+        'cp -RL "$SRC"/. "$ROOT"/',
+    ])
+
+def _fp_table_setup(ctx):
+    # Seed the project fp-lib-table so explicit `component.footprint` ids resolve
+    # (atopile does not consult KiCad's global table). Copy the stock table the
+    # atopile derivation ships at <atopile>/share/atopile/stock-fp-lib-table,
+    # located relative to the resolved `ato` (`$ATO`) rather than as a Bazel
+    # input — rules_nixpkgs' generated BUILD only exposes bin/lib/include, and
+    # these actions are `local`/`no-sandbox`, so the store path is readable
+    # directly. Works for both toolchains (nix: $ATO is an absolute store path;
+    # host: `command -v` resolves the devShell wrapper). atopile's default layout
+    # path is elec/layout/<build>/.
     layout_dir = "elec/layout/{build}".format(build = ctx.attr.build)
     return "\n".join([
         'mkdir -p "$ROOT/{ld}"'.format(ld = layout_dir),
@@ -106,10 +118,10 @@ def _atopile_artifact_impl(ctx):
     cmd = "\n".join([
         "set -euo pipefail",
         _home_export(),
-        'ROOT="$(dirname "{ato_yaml}")"'.format(ato_yaml = ctx.file.ato_yaml.path),
+        _root_setup(ctx),
         _ato_setup(info),
         _path_export(info),
-        _fp_lib_table_setup(ctx),
+        _fp_table_setup(ctx),
         _run_ato(ctx.attr.build, ctx.attr.target, ctx.attr.frozen),
         'cp -f "$ROOT/{src}" "{out}"'.format(src = src, out = out.path),
     ])
@@ -156,10 +168,10 @@ def _atopile_pdf_impl(ctx):
     cmd = "\n".join([
         "set -euo pipefail",
         _home_export(),
-        'ROOT="$(dirname "{ato_yaml}")"'.format(ato_yaml = ctx.file.ato_yaml.path),
+        _root_setup(ctx),
         _ato_setup(info),
         _path_export(info),
-        _fp_lib_table_setup(ctx),
+        _fp_table_setup(ctx),
         '( cd "$ROOT" && "$ATO" build -b {build} {frozen} )'.format(build = ctx.attr.build, frozen = frozen),
         '"{kc}" pcb export pdf "$ROOT/{pcb}" -o "{out}" --layers "{layers}"'.format(
             kc = _kicad_cmd(info),
@@ -206,10 +218,10 @@ def _atopile_build_impl(ctx):
     cmd = "\n".join([
         "set -euo pipefail",
         _home_export(),
-        'ROOT="$(dirname "{ato_yaml}")"'.format(ato_yaml = ctx.file.ato_yaml.path),
+        _root_setup(ctx),
         _ato_setup(info),
         _path_export(info),
-        _fp_lib_table_setup(ctx),
+        _fp_table_setup(ctx),
         '( cd "$ROOT" && "$ATO" build -b {build} {frozen} )'.format(
             build = ctx.attr.build,
             frozen = frozen,

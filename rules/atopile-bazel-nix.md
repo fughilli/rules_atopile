@@ -62,7 +62,7 @@ interchangeable implementations:
 
 | Toolchain | `ato` / `kicad-cli` from | Hermetic? | Use when |
 |-----------|--------------------------|-----------|----------|
-| **nix** (default) | rules_nixpkgs `@atopile` / `@kicad` | yes | build/export artifacts — no `nix develop` needed |
+| **nix** (default) | rules_nixpkgs `@atopile` (+ `@kicad` on Linux) | yes | build/export artifacts — no `nix develop` needed |
 | **host** (fallback) | `PATH` (the `nix develop` shell) | no | interactive `bazel run …:*.view` / `.schematic` |
 
 `MODULE.bazel` wires `rules_nixpkgs` and registers the **nix** toolchain first,
@@ -74,9 +74,18 @@ nixpkgs' `python313`; a floating tag risks a `venvHash` mismatch) — update the
 stays registered as a fallback and is what the `.view`/`.schematic` run targets
 use (they invoke `ato` from PATH by design).
 
-> Note: the nix toolchain provides `ato` as an execroot-relative path, so the
-> artifact rules bind it to `$ATO` (absolutized) *before* `cd`-ing into the
-> project dir — see `_ato_setup` in `bazel/atopile/rules.bzl`.
+**The nix toolchain is split by exec platform** (`bazel/atopile/nix:BUILD.bazel`):
+`nix_linux` sources `kicad-cli` from `@kicad`; `nix_darwin` does **not** reference
+`@kicad` (nixpkgs marks the KiCad *application* broken on aarch64-darwin) and
+instead calls the **system** `/Applications/KiCad/KiCad.app` `kicad-cli`.
+`exec_compatible_with` selects the right one and keeps `@kicad` out of the macOS
+build graph. See §9 for the full macOS story.
+
+> Notes: (1) the nix toolchain provides `ato` as an execroot-relative path, so
+> the rules bind it to `$ATO` (absolutized) up front — see `_ato_setup`. (2) Each
+> artifact action builds in a **private temp copy** of the project (`_root_setup`)
+> rather than the source tree, so concurrent targets don't race and no
+> `build/`·`elec/layout` junk lands in your checkout.
 
 **Rule: atopile build actions are `local` + `no-sandbox` + `requires-network`.**
 This is deliberate — part-picking calls a components API, dep resolution hits the
@@ -320,3 +329,35 @@ Ordered roughly by effort; we ship (1) and note the rest as candidates.
    `frozen = True`. This is frozen's intended use; note it may still need the
    source-2 / re-stamp fix from (3) before a KiCad-saved layout round-trips
    cleanly — verify before relying on it in CI.
+
+---
+
+## 9. Platforms (Linux + macOS)
+
+Verified on **aarch64-linux** and **aarch64-darwin** (Apple Silicon). The one
+real cross-platform wrinkle is KiCad on macOS:
+
+- **nixpkgs marks the KiCad *application* broken on aarch64-darwin** (a
+  long-standing macOS build issue), so `nix/packages.nix` sets `kicad = null`
+  there. The atopile derivation then does **not** put a nixpkgs `kicad-cli` on
+  its wrapper PATH; atopile's own `find_kicad_cli` locates the **system**
+  `/Applications/KiCad/KiCad.app` instead (install it, e.g. `brew install --cask
+  kicad`). On Linux, `kicad = kicad-small` as before.
+- **Footprints still come from nix on both platforms.** `kicad.libraries.
+  footprints` is a *separate, non-broken* data package, so the stock
+  `fp-lib-table` is identical everywhere. (Its `.pretty` dirs sit under
+  `share/kicad/footprints/` on Linux but `footprints/` on macOS — the generator
+  `find`s them rather than hardcoding a path.)
+- **`venvHash` is per-platform** (`venvHashBySystem` in `nix/packages.nix`): the
+  venv compiles any wheels PyPI doesn't ship, so the resolved tree differs by
+  system. Re-pin each platform's entry independently.
+- **The venv determinism pass is Linux-only.** `objcopy`/`patchelf` are ELF
+  tools; on macOS they corrupt Mach-O dylibs (drop `LC_ID_DYLIB`, break
+  code-signing). nixpkgs ships signed, self-contained wheels there, so the
+  extensions are left untouched.
+- **Bazel:** the `nix_darwin` toolchain uses the system `kicad-cli` and never
+  fetches `@kicad` (see §2). Everything else — `@atopile`, the stock table, the
+  isolated build dir — is identical across platforms.
+
+macOS build once online (EasyEDA reachable); nothing here needs the broken
+nixpkgs KiCad app.

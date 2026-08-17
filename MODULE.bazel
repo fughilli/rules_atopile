@@ -58,8 +58,13 @@ nix_pkg.file(
 use_repo(nix_pkg, "atopile", "kicad")
 
 # --- Toolchain registration -------------------------------------------------
-# Nix toolchain first so it wins resolution; the host toolchain stays registered
-# as a fallback (and for interactive `.view`/`.schematic`, which use PATH).
-register_toolchains("//bazel/atopile/nix:nix_toolchain")
+# Nix toolchains first so they win resolution; the host toolchain stays
+# registered as a fallback (and for interactive `.view`/`.schematic`, which use
+# PATH). The nix toolchain is split by exec platform: the darwin variant avoids
+# the `@kicad` repo (nixpkgs KiCad is broken on aarch64-darwin) and uses the
+# system KiCad.app — see //bazel/atopile/nix:BUILD.bazel.
+register_toolchains("//bazel/atopile/nix:nix_toolchain_linux")
+
+register_toolchains("//bazel/atopile/nix:nix_toolchain_darwin")
 
 register_toolchains("//bazel/atopile:host_toolchain")

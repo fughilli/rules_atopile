@@ -22,14 +22,18 @@
   git,
   binutils,
   patchelf,
-  kicad,
-  # KiCad's stock footprint libraries (the `.pretty` dirs). `kicad-small` ships
-  # only the CLI + binaries, so the libraries are a separate package. atopile
-  # resolves an explicit `component.footprint = "Lib:Name"` against a project
-  # `fp-lib-table` whose entries point at these `.pretty` dirs — so we bake a
-  # stock table listing them all (see installPhase) that the build rule drops
-  # into a project's layout dir. Defaults to the libraries of the passed `kicad`.
-  kicadFootprints ? kicad.libraries.footprints,
+  # The KiCad providing `kicad-cli` on the wrapper's PATH. Nullable: nixpkgs
+  # marks the KiCad *application* broken on aarch64-darwin, so on macOS we pass
+  # `null` and let atopile's `find_kicad_cli` locate the system KiCad.app
+  # (/Applications/KiCad/…) instead. On Linux this is `kicad-small`.
+  kicad ? null,
+  # KiCad's stock footprint libraries (the `.pretty` dirs) — a *separate*,
+  # non-broken data package (`kicad.libraries.footprints`), so it's used on both
+  # platforms. atopile resolves an explicit `component.footprint = "Lib:Name"`
+  # against a project `fp-lib-table` whose entries point at these `.pretty` dirs,
+  # so we bake a stock table listing them all (see installPhase). Must be passed
+  # explicitly (there's no non-null `kicad` to default from on darwin).
+  kicadFootprints,
   makeWrapper,
   # Pin the atopile release here. Keep in sync with rules/atopile-bazel-nix.md
   # and the `requires-atopile` field of downstream ato.yaml projects.
@@ -78,7 +82,10 @@ let
     # to `git` while resolving the build backend. Without it the FOD dies with
     # "Git executable not found" before any wheel is downloaded.
     # binutils/patchelf supply `objcopy`/`patchelf` for the determinism pass.
-    nativeBuildInputs = [ uv python cacert git binutils patchelf ];
+    # binutils/patchelf supply objcopy/patchelf for the Linux-only determinism
+    # pass; they're unused (and unneeded) on macOS.
+    nativeBuildInputs = [ uv python cacert git ]
+      ++ lib.optionals stdenv.isLinux [ binutils patchelf ];
 
     # FOD plumbing: content-addressed, network allowed.
     #
@@ -139,17 +146,24 @@ let
       # reach bundled libs via $ORIGIN are byte-untouched (unlike the default
       # fixup's `patchelf --shrink-rpath`, hence dontFixup). NAR ignores mtimes,
       # so content is all that matters for the hash.
-      find "$out" -type f \( -name '*.so' -o -name '*.so.*' \) -print0 \
-        | while IFS= read -r -d "" so; do
-            objcopy --remove-section .note.gnu.build-id --strip-debug "$so" 2>/dev/null || true
-            rp="$(patchelf --print-rpath "$so" 2>/dev/null || true)"
-            if [ -n "$rp" ]; then
-              # grep exits 1 when every entry is filtered out; guard so set -e /
-              # pipefail don't abort the build in that (expected) case.
-              new="$( { printf '%s' "$rp" | tr ':' '\n' | grep -v '^/nix/store/' | paste -sd: - ; } || true )"
-              [ "$new" = "$rp" ] || patchelf --set-rpath "$new" "$so" 2>/dev/null || true
-            fi
-          done
+      #
+      # LINUX-ONLY: objcopy/patchelf are ELF tools. On macOS the extensions are
+      # Mach-O — running objcopy --strip-debug on them drops LC_ID_DYLIB (dlopen
+      # then fails) and would break Apple-Silicon code signatures. Nixpkgs ships
+      # signed, self-contained wheels there, so we leave them untouched.
+      ${lib.optionalString stdenv.isLinux ''
+        find "$out" -type f \( -name '*.so' -o -name '*.so.*' \) -print0 \
+          | while IFS= read -r -d "" so; do
+              objcopy --remove-section .note.gnu.build-id --strip-debug "$so" 2>/dev/null || true
+              rp="$(patchelf --print-rpath "$so" 2>/dev/null || true)"
+              if [ -n "$rp" ]; then
+                # grep exits 1 when every entry is filtered out; guard so set -e /
+                # pipefail don't abort the build in that (expected) case.
+                new="$( { printf '%s' "$rp" | tr ':' '\n' | grep -v '^/nix/store/' | paste -sd: - ; } || true )"
+                [ "$new" = "$rp" ] || patchelf --set-rpath "$new" "$so" 2>/dev/null || true
+              fi
+            done
+      ''}
 
       # The base interpreter is reached via the outer wrapper (base python +
       # PYTHONPATH), so drop the venv's store-referencing interpreter symlinks
@@ -254,10 +268,13 @@ stdenvNoCC.mkDerivation {
     # KiCad's global table — so the build rule copies this file into a project's
     # `elec/layout/<build>/fp-lib-table`. The URIs are absolute, so the atomic
     # footprints get read and embedded into the .kicad_pcb at build time.
-    fp_dir="${kicadFootprints}/share/kicad/footprints"
+    #
+    # `find` the .pretty dirs rather than hardcoding a path: the footprints
+    # package installs them under share/kicad/footprints/ on Linux but plain
+    # footprints/ on macOS.
     {
       echo "(fp_lib_table (version 7)"
-      for pretty in "$fp_dir"/*.pretty; do
+      find "${kicadFootprints}" -type d -name '*.pretty' | sort | while IFS= read -r pretty; do
         name="$(basename "$pretty" .pretty)"
         echo "  (lib (name \"$name\")(type \"KiCad\")(uri \"$pretty\")(options \"\")(descr \"stock KiCad footprints\"))"
       done
@@ -277,8 +294,8 @@ stdenvNoCC.mkDerivation {
     makeWrapper "${python}/bin/python${pyVer}" "$out/bin/ato" \
       --add-flags "${venv}/bin/ato" \
       --prefix PYTHONPATH : "${venv}/lib/python${pyVer}/site-packages" \
-      --prefix PATH : "${lib.makeBinPath [ kicad ]}" \
-      --prefix LD_LIBRARY_PATH : "${lib.makeLibraryPath [ stdenv.cc.cc.lib ]}" \
+      ${lib.optionalString (kicad != null) ''--prefix PATH : "${lib.makeBinPath [ kicad ]}" \
+      ''}--prefix LD_LIBRARY_PATH : "${lib.makeLibraryPath [ stdenv.cc.cc.lib ]}" \
       --set-default ATO_NON_INTERACTIVE 1 \
       --set-default OPENSSL_armcap 0 \
       --set-default ATO_STOCK_FP_LIB_TABLE "$out/share/atopile/stock-fp-lib-table"
