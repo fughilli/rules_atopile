@@ -1,0 +1,31 @@
+"""atopile rules, toolchain type, and the default host toolchain."""
+
+load(":toolchain.bzl", "atopile_toolchain")
+
+package(default_visibility = ["//visibility:public"])
+
+# The toolchain type every atopile rule resolves.
+toolchain_type(name = "toolchain_type")
+
+# Make the .bzl files loadable from any package.
+exports_files([
+    "defs.bzl",
+    "rules.bzl",
+    "toolchain.bzl",
+    "providers.bzl",
+])
+
+# --- Host toolchain: `ato` and `kicad-cli` come from PATH --------------------
+# This is the zero-config default (works inside `nix develop`). For a fully
+# hermetic Nix-provided toolchain, see //bazel/atopile/nix and MODULE.bazel.
+atopile_toolchain(
+    name = "host",
+    ato_path = "ato",
+    kicad_cli_path = "kicad-cli",
+)
+
+toolchain(
+    name = "host_toolchain",
+    toolchain = ":host",
+    toolchain_type = ":toolchain_type",
+)

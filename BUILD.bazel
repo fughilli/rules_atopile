@@ -1,0 +1,2 @@
+# Root package. atopile rules live under //bazel/atopile; designs under //examples.
+package(default_visibility = ["//visibility:public"])

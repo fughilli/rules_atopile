@@ -1,0 +1,15 @@
+load("//bazel/atopile:defs.bzl", "atopile_project")
+
+# Demonstrates PARAMETERISED part picking via the local picker
+# (tools/atopile-picker). The picker must be running and reachable at the URL in
+# ato.yaml (`python tools/atopile-picker/server.py 8099`); atopile also fetches
+# the picked part's footprint from EasyEDA, so this build is `requires-network`
+# (already the case for all atopile actions). Non-frozen like blinky: the layout
+# is regenerated from code each build.
+atopile_project(
+    name = "picker_demo",
+    srcs = ["elec/src/picker_demo.ato"],
+    ato_yaml = "ato.yaml",
+    build = "default",
+    frozen = False,
+)

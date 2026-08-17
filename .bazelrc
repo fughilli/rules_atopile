@@ -1,0 +1,7 @@
+# atopile builds shell out to KiCad and hit external part APIs, so the artifact
+# actions are declared `local` + `requires-network` (see bazel/atopile/rules.bzl).
+common --enable_bzlmod
+build --incompatible_strict_action_env
+# Surface network + PATH to the local atopile actions.
+build --action_env=PATH
+test --action_env=PATH

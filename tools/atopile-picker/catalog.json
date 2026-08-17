@@ -1,0 +1,10 @@
+{
+  "_comment": "Minimal offline parts catalog for the local atopile picker. Each entry is a real LCSC/JLCPCB part whose footprint geometry EasyEDA can still serve (verified 2026-08-17). `resistance_ohms` drives type-based resistor matching; the picker synthesises the atopile `attributes` P_Set from it. Grow this file (or generate it from the published jlcparts catalog) to widen coverage — see README.md.",
+  "resistors": [
+    {"lcsc": 25080, "mpn": "0402WGF1210TCE", "manufacturer": "UNI-ROYAL(Uniroyal Elec)", "package": "0402", "resistance_ohms": 121.0, "basic": 1, "description": "121 ohm 0402 1% 1/16W"},
+    {"lcsc": 25081, "mpn": "0402WGF1400TCE", "manufacturer": "UNI-ROYAL(Uniroyal Elec)", "package": "0402", "resistance_ohms": 140.0, "basic": 1, "description": "140 ohm 0402 1% 1/16W"},
+    {"lcsc": 25082, "mpn": "0402WGF1500TCE", "manufacturer": "UNI-ROYAL(Uniroyal Elec)", "package": "0402", "resistance_ohms": 150.0, "basic": 1, "description": "150 ohm 0402 1% 1/16W"},
+    {"lcsc": 25087, "mpn": "0402WGF2000TCE", "manufacturer": "UNI-ROYAL(Uniroyal Elec)", "package": "0402", "resistance_ohms": 200.0, "basic": 1, "description": "200 ohm 0402 1% 1/16W"},
+    {"lcsc": 25804, "mpn": "0402WGF1002TCE", "manufacturer": "UNI-ROYAL(Uniroyal Elec)", "package": "0402", "resistance_ohms": 10000.0, "basic": 1, "description": "10k ohm 0402 1% 1/16W"}
+  ]
+}

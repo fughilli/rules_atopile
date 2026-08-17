@@ -1,0 +1,26 @@
+load("//bazel/atopile:defs.bzl", "atopile_library", "atopile_project")
+
+# A reusable component/module, wrapping atopile's `module` concept.
+atopile_library(
+    name = "indicator",
+    srcs = ["elec/src/indicator.ato"],
+    import_name = "example/indicators",
+    visibility = ["//visibility:public"],
+)
+
+# The design. Generates blinky, blinky.view, blinky.pdf, blinky.gerber,
+# blinky.bom, blinky.glb, blinky.step, blinky.svg, blinky.png, blinky.schematic.
+atopile_project(
+    name = "blinky",
+    srcs = ["elec/src/blinky.ato"],
+    ato_yaml = "ato.yaml",
+    build = "default",
+    deps = [":indicator"],
+    # The board is placed entirely from code (no hand-editing in KiCad), and
+    # atopile stamps fresh random UUIDs into the layout on every build, so a
+    # committed layout is never a byte-for-byte `--frozen` fixed point. Build
+    # non-frozen: the layout is regenerated from the .ato sources each time.
+    # To freeze instead, hand-place via `bazel run :blinky.view`, save, commit
+    # the .kicad_pcb, and flip this to True. See rules doc §frozen.
+    frozen = False,
+)

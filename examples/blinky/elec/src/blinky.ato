@@ -1,0 +1,10 @@
+import ElectricPower
+from "indicator.ato" import IndicatorLed
+
+module Blinky:
+    """Minimal example: a power input driving a reusable LED indicator."""
+    power = new ElectricPower
+    power.voltage = 3.3V +/- 5%
+
+    indicator = new IndicatorLed
+    power ~ indicator.power

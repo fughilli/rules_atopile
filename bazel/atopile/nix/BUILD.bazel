@@ -1,0 +1,29 @@
+"""Hermetic atopile toolchain backed by rules_nixpkgs.
+
+Only loaded when you opt into the Nix toolchain (see MODULE.bazel: uncomment the
+`nix_pkg`/`register_toolchains` lines). It references the `@atopile` and `@kicad`
+repositories produced by rules_nixpkgs, so this package will fail to load unless
+those repos exist — which is why it lives here and not in the parent BUILD.
+"""
+
+load("//bazel/atopile:toolchain.bzl", "atopile_toolchain")
+
+package(default_visibility = ["//visibility:public"])
+
+atopile_toolchain(
+    name = "nix",
+    # rules_nixpkgs exposes individual files of a package by their store path.
+    ato = "@atopile//:bin/ato",
+    kicad_cli = "@kicad//:bin/kicad-cli",
+    # The full closures must be present as action inputs.
+    data = [
+        "@atopile//:bin",
+        "@kicad//:bin",
+    ],
+)
+
+toolchain(
+    name = "nix_toolchain",
+    toolchain = ":nix",
+    toolchain_type = "//bazel/atopile:toolchain_type",
+)

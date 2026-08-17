@@ -1,0 +1,5 @@
+requires-atopile: ">=0.10.0,<0.11.0"
+
+builds:
+  default:
+    entry: elec/src/blinky.ato:Blinky

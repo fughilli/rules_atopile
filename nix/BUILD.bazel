@@ -1,0 +1,9 @@
+# Expose the .nix sources to rules_nixpkgs (nix_pkg.file / nix_file_deps).
+exports_files(
+    [
+        "bazel-atopile.nix",
+        "packages.nix",
+        "atopile.nix",
+    ],
+    visibility = ["//visibility:public"],
+)

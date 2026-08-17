@@ -1,0 +1,10 @@
+requires-atopile: ">=0.10.0,<0.11.0"
+
+# Point part-picking at the local, offline picker (tools/atopile-picker).
+services:
+  components:
+    url: http://127.0.0.1:8099
+
+builds:
+  default:
+    entry: elec/src/picker_demo.ato:PickerDemo

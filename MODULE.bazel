@@ -1,0 +1,65 @@
+"""Bazel module for atopile PCB projects.
+
+Provides the atopile rules (//bazel/atopile) and, optionally, a hermetic
+Nix-backed toolchain via rules_nixpkgs.
+"""
+
+module(
+    name = "atopile_rules",
+    version = "0.1.0",
+)
+
+bazel_dep(name = "platforms", version = "0.0.11")
+
+# --- Nix integration (hermetic toolchain) -----------------------------------
+# Provides `ato`/`kicad-cli` to Bazel as concrete store paths via rules_nixpkgs,
+# so artifact actions don't depend on a `nix develop` PATH. nixpkgs is pinned to
+# the SAME commit as flake.lock: the atopile derivation (and its pinned venvHash
+# in nix/packages.nix) is keyed to that nixpkgs' python313, so a floating tag
+# would risk a venvHash mismatch. To re-pin, update `commit` here and flake.lock
+# together. Prefer the host toolchain for interactive `bazel run …:*.view`.
+bazel_dep(name = "rules_nixpkgs_core", version = "0.13.0")
+
+nix_repo = use_extension("@rules_nixpkgs_core//extensions:repository.bzl", "nix_repo")
+nix_repo.github(
+    name = "nixpkgs",
+    org = "NixOS",
+    repo = "nixpkgs",
+    commit = "ac62194c3917d5f474c1a844b6fd6da2db95077d",  # == flake.lock nixpkgs
+)
+use_repo(nix_repo, "nixpkgs")
+
+nix_pkg = use_extension("@rules_nixpkgs_core//extensions:package.bzl", "nix_pkg")
+
+# Both packages come from //nix:bazel-atopile.nix, which returns the
+# `{ atopile, kicad }` attrset; `attr` selects one. file_deps make Bazel refetch
+# when the derivation or its pinned venvHash changes. Sourcing kicad from the
+# same file (not `nix_pkg.attr` on nixpkgs) keeps it identical to the flake's.
+nix_pkg.file(
+    name = "atopile",
+    attr = "atopile",
+    file = "//nix:bazel-atopile.nix",
+    file_deps = [
+        "//nix:packages.nix",
+        "//nix:atopile.nix",
+    ],
+    repo = "@nixpkgs",
+)
+nix_pkg.file(
+    name = "kicad",
+    attr = "kicad",
+    file = "//nix:bazel-atopile.nix",
+    file_deps = [
+        "//nix:packages.nix",
+        "//nix:atopile.nix",
+    ],
+    repo = "@nixpkgs",
+)
+use_repo(nix_pkg, "atopile", "kicad")
+
+# --- Toolchain registration -------------------------------------------------
+# Nix toolchain first so it wins resolution; the host toolchain stays registered
+# as a fallback (and for interactive `.view`/`.schematic`, which use PATH).
+register_toolchains("//bazel/atopile/nix:nix_toolchain")
+
+register_toolchains("//bazel/atopile:host_toolchain")
