@@ -216,6 +216,30 @@ let
           open(p, "w", encoding="utf-8").write(src)
       PY
 
+      # --- Local-picker patch: no atopile sign-in for a localhost components URL.
+      # atopile 0.15.x makes ApiClient._cfg raise "Sign-in required" whenever
+      # get_auth_token() is empty — before ANY request, so it blocks even a
+      # self-hosted local picker (tools/atopile-picker). When the configured
+      # components URL is localhost, substitute a dummy token (the local picker
+      # ignores Authorization); the hosted API still requires a real sign-in.
+      # Applied only if the anchor is present (0.15.x), so it's a no-op on 0.10.x.
+      python3 - "$out"/lib/python*/site-packages/faebryk/libs/picker/api/api.py <<'PY'
+      import sys
+      p = sys.argv[1]
+      src = open(p, encoding="utf-8").read()
+      anchor = "        token = get_auth_token()\n        if not token:\n"
+      inject = (
+          "        token = get_auth_token()\n"
+          "        if not token and any(h in config.project.services.components.url\n"
+          "                              for h in (\"localhost\", \"127.0.0.1\", \"0.0.0.0\")):\n"
+          "            token = \"local-picker\"\n"
+          "        if not token:\n"
+      )
+      if anchor in src and inject not in src:
+          src = src.replace(anchor, inject, 1)
+          open(p, "w", encoding="utf-8").write(src)
+      PY
+
       # (3) pip RECORD files pin each installed file's sha256; the stripped .so
       # and rewritten shebangs no longer match, so regenerate every RECORD entry
       # against the normalized tree (else RECORD re-imports the nondeterminism).

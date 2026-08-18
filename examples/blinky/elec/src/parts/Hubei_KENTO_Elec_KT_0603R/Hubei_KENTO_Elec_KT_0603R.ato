@@ -1,0 +1,19 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component Hubei_KENTO_Elec_KT_0603R_package:
+    """0603"""
+
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C2286", date="2026-08-18T06:46:49.465388+00:00", checksum="88a7aec82fd365093cf7e1edba16b1c77157f39f9dc7faa7831579f9e1a9c9dd">
+
+    trait is_atomic_part<manufacturer="Hubei KENTO Elec", partnumber="KT-0603R", footprint="LED-SMD_L1.6-W0.8-R-RD.kicad_mod", symbol="KT-0603R.kicad_sym", model="LED0603_L1.6-W0.8-H0.6.step">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C2286", manufacturer="Hubei KENTO Elec", partno="KT-0603R">
+    trait has_designator_prefix<prefix="LED">
+
+    # pins
+    signal A ~ pin 1
+    signal K ~ pin 2

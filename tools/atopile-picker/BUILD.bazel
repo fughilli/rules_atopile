@@ -1,0 +1,11 @@
+# The local picker (server + catalog), consumed by the atopile build rules as a
+# sidecar when a project sets `picker = True` (atopile 0.15.x requires a
+# components API for every pick). See //bazel/atopile:rules.bzl (_picker_setup).
+filegroup(
+    name = "picker",
+    srcs = [
+        "server.py",
+        "catalog.json",
+    ],
+    visibility = ["//visibility:public"],
+)

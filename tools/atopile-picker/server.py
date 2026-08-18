@@ -62,9 +62,17 @@ def _component(part: dict, params: dict) -> dict:
     """Build an API `Component` (faebryk/libs/picker/api/models.py:Component).
 
     `attributes` carries P_Set literals keyed by the module's parameter names;
-    atopile aliases each design param to its literal after attaching. Only
-    `resistance` is constrained by the design here, so `max_power`/`max_voltage`
-    are left null (atopile treats a null attribute as unbounded == always OK)."""
+    atopile aliases each design param to its literal after attaching. For a
+    resistance-constrained *type* query we return the resistance P_Set; for an
+    explicit `lcsc_id`/`mpn` pick nothing is constrained, so `attributes` can be
+    empty (atopile just attaches the part + its EasyEDA footprint)."""
+    attributes = {}
+    if "resistance_ohms" in part:
+        attributes = {
+            "resistance": _ohms_set(part["resistance_ohms"]),
+            "max_power": None,
+            "max_voltage": None,
+        }
     return {
         "lcsc": part["lcsc"],
         "manufacturer_name": part["manufacturer"],
@@ -76,12 +84,17 @@ def _component(part: dict, params: dict) -> dict:
         "is_preferred": int(part.get("preferred", 0)),
         "stock": int(part.get("stock", 100000)),
         "price": [{"qTo": None, "price": part.get("price", 0.001), "qFrom": 1}],
-        "attributes": {
-            "resistance": _ohms_set(part["resistance_ohms"]),
-            "max_power": None,
-            "max_voltage": None,
-        },
+        "attributes": attributes,
     }
+
+
+def _all_parts() -> list[dict]:
+    """Every part across the catalog's type lists (resistors, leds, …)."""
+    out = []
+    for key, val in CATALOG.items():
+        if isinstance(val, list):
+            out.extend(val)
+    return out
 
 
 def _interval(pset: dict | None):
@@ -113,25 +126,31 @@ def _match_resistors(params: dict) -> list[dict]:
     return out
 
 
-def _query(method: str, params: dict) -> list[dict]:
-    if method == "resistors":
+def _query_one(params: dict) -> list[dict]:
+    """Dispatch a single /v0/query param object to matching components.
+
+    atopile sends three shapes: an explicit LCSC pick (`{"lcsc": N, ...}`, from
+    `lcsc_id`), an explicit manufacturer pick (`{"manufacturer_name"/"mpn": …}`,
+    from `mpn`), or a type query (`{"endpoint": "resistors", …}`, from
+    `package`/`resistance`)."""
+    if "lcsc" in params:
+        return _by_lcsc(int(params["lcsc"]))
+    if params.get("part_number") or params.get("mpn"):
+        return _by_mfr(params.get("manufacturer_name") or params.get("manufacturer", ""),
+                       params.get("part_number") or params.get("mpn"))
+    if params.get("endpoint") == "resistors":
         return _match_resistors(params)
-    # capacitors/inductors/... not yet in the catalog -> no candidates.
+    # capacitors/inductors/… not yet in the catalog -> no candidates.
     return []
 
 
 def _by_lcsc(lcsc: int) -> list[dict]:
-    for part in CATALOG.get("resistors", []):
-        if part["lcsc"] == lcsc:
-            return [_component(part, {})]
-    return []
+    return [_component(p, {}) for p in _all_parts() if p["lcsc"] == lcsc]
 
 
 def _by_mfr(mfr: str, pn: str) -> list[dict]:
-    for part in CATALOG.get("resistors", []):
-        if part["manufacturer"] == mfr and part["mpn"] == pn:
-            return [_component(part, {})]
-    return []
+    return [_component(p, {}) for p in _all_parts()
+            if p["manufacturer"] == mfr and p["mpn"] == pn]
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -158,10 +177,10 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/v0/query":
             queries = data.get("queries", [])
             return self._send({"results": [
-                {"components": _query(q.get("endpoint", ""), q)} for q in queries]})
+                {"components": _query_one(q)} for q in queries]})
         m = re.match(r"^/v0/query/([A-Za-z_]+)$", self.path)
         if m:
-            return self._send({"components": _query(m.group(1), data)})
+            return self._send({"components": _query_one({**data, "endpoint": m.group(1)})})
         self._send({"components": []})
 
     def log_message(self, *_):  # quiet

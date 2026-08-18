@@ -18,11 +18,20 @@ let
   # used on both platforms.
   kicadApp = if isDarwin then null else pkgs.kicad-small;
 
+  # atopile version. 0.15.x is a compiler rewrite vs 0.10.x — needs Python 3.14
+  # (Requires-Python >=3.14,<3.15) and picks parts via lcsc_id/mpn/package (no
+  # explicit-footprint `.ato` attribute anymore). Its deps resolve cleanly, so
+  # no extraPipPackages (0.10.x needed `mcp<2`).
+  version = "0.15.8";
+
   # The venv compiles extensions wherever PyPI ships no wheel, so the resolved
-  # tree — and thus `venvHash` — is PER-PLATFORM. Keyed by system here.
+  # tree — and thus `venvHash` — is PER-PLATFORM (and per-version). Keyed by
+  # system here. Re-pin after a version bump: set the entry to lib.fakeHash, run
+  # `nix build .#atopile`, paste the reported "got:" hash. The venv FOD is
+  # reproducible (determinism pass in atopile.nix), so the pin holds.
   venvHashBySystem = {
-    "aarch64-linux" = "sha256-9y20YAaYHBC8ot8GGgYr7rSr+kIKwpOpX6aBv295Idw=";
-    "aarch64-darwin" = "sha256-pEBefL1wFmBKdqf9wxmza8CBXF1Zand1Sf7Ix4bXMio=";
+    "aarch64-linux" = "sha256-AAXyNGp2PaQSfcQmwOakRUpkm6UF/irnUm7iqXjMaxo=";
+    "aarch64-darwin" = lib.fakeHash; # re-pin on the mac
   };
   venvHash = venvHashBySystem.${pkgs.stdenv.hostPlatform.system} or lib.fakeHash;
 in
@@ -42,27 +51,12 @@ rec {
   atopile = pkgs.callPackage ./atopile.nix {
     kicad = kicadApp;
     kicadFootprints = kicad-footprints;
+    inherit version;
     # MUST pass python explicitly: `callPackage` would otherwise auto-fill the
     # `python` arg from `pkgs.python`, which in nixpkgs is an alias for Python
-    # *2.7* (insecure, and unusable by uv) rather than the arg's `python313`
-    # default. atopile 0.10.x wants 3.13.
-    python = pkgs.python313;
-    # Pinned resolved-venv hash (per-platform; see venvHashBySystem above). To
-    # re-pin after a version bump, set the relevant entry to lib.fakeHash, run
-    # `nix build .#atopile`, and paste the reported "got:" hash. The venv FOD is
-    # reproducible (determinism pass in atopile.nix), so the pin holds.
-    inherit venvHash;
-  };
-
-  # Latest atopile (0.15.x). Requires Python >=3.14 (python314 is in the pinned
-  # nixpkgs), and defaults its component-picking API to the live but auth-gated
-  # https://legacy.atopileapi.com. Its deps resolve cleanly, so no extraPipPackages.
-  atopile-latest = pkgs.callPackage ./atopile.nix {
-    inherit kicad;
-    kicadFootprints = kicad-footprints;
+    # *2.7* (insecure, and unusable by uv). 0.15.x wants 3.14.
     python = pkgs.python314;
-    version = "0.15.8";
     extraPipPackages = [ ];
-    venvHash = "sha256-pzDPd1zETPGv5cxgRmzZ9DvIaUxdvGiAEyI8quwxjhk=";
+    inherit venvHash;
   };
 }

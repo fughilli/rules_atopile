@@ -1,4 +1,8 @@
-requires-atopile: ">=0.10.0,<0.11.0"
+requires-atopile: ">=0.15.0,<0.16.0"
+
+services:
+  components:
+    url: http://127.0.0.1:8099
 
 builds:
   default:

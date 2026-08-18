@@ -1,33 +1,24 @@
+# enable the `~>` series-bridge operator used below
+#pragma experiment("BRIDGE_CONNECT")
+
 import ElectricPower
-
-# Fully local, hermetic indicator: the LED and resistor are declared as
-# `component`s with EXPLICIT KiCad footprints, so the build calls neither the
-# part-picking API nor EasyEDA — everything resolves against the footprint
-# libraries bundled in the nix `kicad-small`. The trade-off is that these are
-# footprint-only (no resistance/LED parameters, no BOM part number). Wiring in a
-# picker (local or upstream) is what lets you go back to the parameterized
-# stdlib `Resistor`/`LED` and get real orderable parts. See rules doc §picking.
-
-component Res0402:
-    # 130 Ω series resistor (sized for ~10 mA at 3.3 V, ~2 V LED drop).
-    signal p1 ~ pin 1
-    signal p2 ~ pin 2
-    footprint = "Resistor_SMD:R_0402_1005Metric"
-
-component Led0603:
-    signal anode ~ pin 1
-    signal cathode ~ pin 2
-    footprint = "LED_SMD:LED_0603_1608Metric"
+import Resistor
+import LED
 
 module IndicatorLed:
     """A reusable LED + series resistor indicator.
 
     Exposed as an `atopile_library` so other designs can reuse it via `deps`.
+    Uses real LCSC parts (atopile 0.15.x picks by `lcsc_id`; footprints come from
+    EasyEDA — reachable, and cached under `.ato` for offline `--frozen` rebuilds).
     """
     power = new ElectricPower
-    resistor = new Res0402
-    led = new Led0603
+    resistor = new Resistor
+    led = new LED
 
-    power.vcc ~ resistor.p1
-    resistor.p2 ~ led.anode
-    led.cathode ~ power.gnd
+    # 150 Ω series resistor (~9 mA at 3.3 V through a ~2 V red LED).
+    resistor.lcsc_id = "C25082"   # UNI-ROYAL 0402WGF1500TCE, 150 Ω 0402
+    led.lcsc_id = "C2286"         # KT-0603R, red 0603 LED
+
+    # hv -> resistor -> led(anode->cathode) -> lv
+    power.hv ~> resistor ~> led ~> power.lv
