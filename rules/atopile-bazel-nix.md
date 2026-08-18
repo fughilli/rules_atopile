@@ -10,6 +10,18 @@ Bazel ──> toolchain + rules + sub-targets     (bazel/atopile/)
 You  ──> atopile_project / atopile_library    (examples/blinky/BUILD.bazel)
 ```
 
+> **atopile 0.15.8 (compiler rewrite).** Parts are declared with
+> `lcsc_id`/`mpn`/`package` and **picked** — there are no explicit `.ato`
+> footprints anymore — power uses `hv`/`lv`, and every pick hits a components API
+> that requires sign-in. This repo ships a **local picker** (`tools/atopile-picker`)
+> that `atopile_project(picker = True)` runs as a build sidecar (a dummy auth
+> token is patched in for a localhost URL); footprints come from EasyEDA, cached
+> under `elec/src/parts/` (committed). `examples/blinky` is the worked example
+> (real LCSC parts + autoroute + framed PDF). §10 covers autorouting; §8 covers
+> `--frozen`. NOTE: §6–§7 below still describe the older 0.10.x explicit-footprint
+> model and are being updated — treat §0-banner + blinky's BUILD/ato.yaml as the
+> source of truth for the picking flow.
+
 ---
 
 ## 1. The Nix layer — bringing atopile in
@@ -123,7 +135,7 @@ One call fans out into these sub-targets (`name.<kind>`):
 |------------|-----------|----------------|--------|
 | `blinky` | `build` | `ato build -b default` | build marker (design compiles) |
 | `blinky.view` | **run** | `ato build -b default --open` | opens the **KiCad** PCB editor |
-| `blinky.schematic` | **run** | `ato view -b default --serve` | serves the interactive block diagram |
+| `blinky.schematic` | **run** | `ato serve core` | starts the 0.15.x backend the atopile IDE/web app connect to |
 | `blinky.pdf` | `build` | `ato build` + `kicad-cli pcb export pdf` (from `elec/layout/<b>/<b>.kicad_pcb`) | `blinky.out/blinky.pdf` (board layout) |
 | `blinky.gerber` | `build` | `ato build -t mfg-data` | `blinky.out/blinky.gerber.zip` |
 | `blinky.bom` | `build` | `ato build -t bom` | `blinky.out/blinky.bom.csv` |

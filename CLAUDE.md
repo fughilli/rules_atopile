@@ -41,14 +41,21 @@ bazel run   //examples/blinky:blinky.schematic  # interactive block diagram
   re-pin each system's entry independently. Verified on aarch64-linux + -darwin.
 - Bazel builds run in a private temp copy of the project (no `build/`·`elec/layout`
   written into your checkout); the nix toolchain is split `nix_linux`/`nix_darwin`.
-- Two behaviours are patched into the atopile venv (see `nix/atopile.nix`): the
-  empty part-pick query no longer hits the network (so all-local designs build
-  offline), and the `ato` wrapper sets `OPENSSL_armcap=0` (aarch64 crypto SIGILL
-  fix) + `ATO_STOCK_FP_LIB_TABLE`. Build actions also set `HOME` (kicad-cli needs it).
-- Give footprint-only parts explicit `component.footprint = "Lib:Name"` (see
-  `examples/blinky`), which needs **no** part-picking API. Parameterised stdlib
-  parts (`Resistor` + `resistance`) require a picker — see the local picker in
-  `tools/atopile-picker/` and rules doc §picking.
+- **atopile is pinned to 0.15.8** (Python 3.14). 0.15.x is a compiler rewrite:
+  parts are declared with `lcsc_id`/`mpn`/`package` and **picked** (no explicit
+  `.ato` footprints), power uses `hv`/`lv`, and **every pick hits a components API
+  that requires sign-in**. See `examples/blinky` for the idiom.
+- Because picking needs an API, `atopile_project(picker = True)` runs the **local
+  picker** (`tools/atopile-picker/`) as a sidecar during the build — a stdlib
+  HTTP server that resolves LCSC parts from `catalog.json`; footprints come from
+  EasyEDA (cached under `elec/src/parts/`, committed → no EasyEDA at build time).
+  The rules give it a free port via `ATO_SERVICES_COMPONENTS_URL`.
+- Three behaviours are patched into the atopile venv (`nix/atopile.nix`): the
+  empty part-pick query short-circuits (no network), a **dummy auth token is
+  used when the components URL is localhost** (so the local picker needs no
+  sign-in; the hosted API still does), and the `ato` wrapper sets
+  `OPENSSL_armcap=0` + `ATO_STOCK_FP_LIB_TABLE`. Build actions set `HOME`
+  (kicad-cli) and make the isolated copy writable (0.15.x rewrites the fp-lib-table).
 - Artifact actions are `local` + `no-sandbox` + `requires-network` on purpose
   (part-picking / registry / EasyEDA footprints). An auto-placed, code-only board
   gets fresh random UUIDs every build, so it is **not** a `--frozen` fixed point:
@@ -57,8 +64,8 @@ bazel run   //examples/blinky:blinky.schematic  # interactive block diagram
 - Commit `elec/layout/**/*.kicad_pcb` only for frozen (hand-placed) projects;
   git-ignore `build/`, `.ato/`, and generated `fp-lib-table`.
 - atopile has no schematic sheet (no `.kicad_sch`/`.kicad_pro`): `.pdf` is the
-  board layout; `.schematic` is the block-diagram viewer. KiCad's "open
-  schematic" button has nothing to show — expected.
+  board layout; KiCad's "open schematic" button has nothing to show — expected.
+  `.schematic` runs `ato serve core` (0.15.x backend the IDE/web app connect to).
 - `atopile_project(autoroute = True)` gives the `.pdf` real traces with no human
   in the loop: build twice (push nets) → headless FreeRouting via KiCad's pcbnew
   Python → frame. FreeRouting is pinned to 2.2.4 + a Temurin JRE 25

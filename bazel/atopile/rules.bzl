@@ -441,6 +441,8 @@ cd "${BUILD_WORKSPACE_DIRECTORY:-.}/@@PROJECT_DIR@@"
 # component.footprint ids resolve, same as the build rules do.
 _fptbl="$(python3 -c 'import os,sys;print(os.path.dirname(os.path.dirname(os.path.realpath(sys.argv[1]))))' "$ATO" 2>/dev/null)/share/atopile/stock-fp-lib-table"
 if [ -f "$_fptbl" ]; then mkdir -p "@@LAYOUT_DIR@@"; cp -f "$_fptbl" "@@LAYOUT_DIR@@/fp-lib-table"; fi
+# `ato serve core` (the .schematic target) reads its port from this env var.
+export ATOPILE_CORE_SERVER_PORT="${ATOPILE_CORE_SERVER_PORT:-8080}"
 exec "$ATO" @@ARGV@@
 """
     script = script.replace("@@PROJECT_DIR@@", project_dir)

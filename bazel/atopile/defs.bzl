@@ -94,9 +94,12 @@ def atopile_project(
         args_ = ["build", "-b", build, "--open"],
         **_run_common
     )
+    # 0.15.x has no standalone diagram viewer; `ato serve core` starts the
+    # backend the atopile IDE/web app (app.atopile.io, VS Code extension) connect
+    # to for the block-diagram/inspect view.
     atopile_run(
         name = name + ".schematic",
-        args_ = ["view", "-b", build, "--serve"],
+        args_ = ["serve", "core"],
         **_run_common
     )
 
