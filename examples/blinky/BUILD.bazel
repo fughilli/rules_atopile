@@ -27,4 +27,7 @@ atopile_project(
     # a near-blank A4 sheet. Frame it (outline + tight page, 4 mm margin) so
     # blinky.pdf shows an actual board. See tools/board_outline.py.
     outline_margin_mm = 4,
+    # End-to-end with no human in the loop: headless-route the board (FreeRouting
+    # via KiCad's pcbnew) so blinky.pdf shows real traces. See tools/autoroute.py.
+    autoroute = True,
 )

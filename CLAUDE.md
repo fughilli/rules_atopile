@@ -56,5 +56,10 @@ bazel run   //examples/blinky:blinky.schematic  # interactive block diagram
   hand-place and save in KiCad.
 - Commit `elec/layout/**/*.kicad_pcb` only for frozen (hand-placed) projects;
   git-ignore `build/`, `.ato/`, and generated `fp-lib-table`.
-- atopile has no schematic sheet: `.pdf` is the board layout; `.schematic` is the
-  block-diagram viewer.
+- atopile has no schematic sheet (no `.kicad_sch`/`.kicad_pro`): `.pdf` is the
+  board layout; `.schematic` is the block-diagram viewer. KiCad's "open
+  schematic" button has nothing to show — expected.
+- `atopile_project(autoroute = True)` gives the `.pdf` real traces with no human
+  in the loop: build twice (push nets) → headless FreeRouting via KiCad's pcbnew
+  Python → frame. FreeRouting is pinned to 2.2.4 + a Temurin JRE 25
+  (`nix/freerouting.nix`); nixpkgs' 2.1.0 blocks on a GUI dialog. See rules §10.

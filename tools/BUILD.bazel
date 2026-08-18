@@ -1,7 +1,11 @@
-# board_outline.py: post-build helper the PDF rule runs to frame an auto-placed
-# board (outline + tight page) so exports aren't a near-blank A4 sheet. Opt in
-# via `outline_margin_mm` on `atopile_project`.
+# Post-build helpers the rules run:
+#  - board_outline.py: frame an auto-placed board (outline + tight page) so
+#    exports aren't a near-blank A4 sheet. Opt in via `outline_margin_mm`.
+#  - autoroute.py: headless FreeRouting pass (opt in via `autoroute`).
 exports_files(
-    ["board_outline.py"],
+    [
+        "board_outline.py",
+        "autoroute.py",
+    ],
     visibility = ["//visibility:public"],
 )

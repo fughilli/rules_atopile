@@ -367,3 +367,35 @@ real cross-platform wrinkle is KiCad on macOS:
 
 macOS build once online (EasyEDA reachable); nothing here needs the broken
 nixpkgs KiCad app.
+
+---
+
+## 10. Autorouting (no-human end-to-end)
+
+`atopile_project(..., autoroute = True)` makes the `.pdf` target produce a board
+with **real traces**, fully unattended. atopile places components and computes
+the netlist but does **not** route copper; KiCad has no CLI router either — its
+"autorouter" is the external **FreeRouting**. The `.pdf` pipeline (see
+`tools/autoroute.py`) does, in one action:
+
+1. `ato build` **twice** — the first build creates the layout with pads on net 0;
+   the second pushes the nets onto them (atopile writes nets on reload).
+2. **FreeRouting** headless, via KiCad's **pcbnew Python** (the only thing with
+   Specctra DSN/SES bindings — `kicad-cli`/`kicad-small` have none): export DSN →
+   route → import SES back → save. A pcbnew-capable interpreter is resolved at
+   action time — `$KICAD_PYTHON`, the system KiCad.app (macOS), then `python3`
+   (Linux w/ a full nixpkgs kicad). If none is found, routing is **skipped with a
+   warning** (the board just has no traces) so the build still succeeds.
+3. `board_outline.py` frames the routed board, translating footprints **and** the
+   new segments/vias together so traces stay aligned.
+
+**FreeRouting is pinned to 2.2.4** (`nix/freerouting.nix`), not nixpkgs' 2.1.0:
+2.1.0 pops a GUI email dialog even with `-gui.enabled false` (blocks headless
+runs) and scores NaN; every 1.x needs a display. 2.2.4's jar needs **Java 25**,
+which this nixpkgs lacks (max jdk24), so the derivation bundles a pinned Temurin
+JRE 25 (forcing `-Djava.awt.headless=true`). `@freerouting` is only fetched when
+a project sets `autoroute = True`.
+
+> No board schematic: atopile is code-first and emits **no `.kicad_sch`/
+> `.kicad_pro`**, so KiCad's "open schematic" button has nothing to show — that's
+> expected. The block diagram is `bazel run …:*.schematic` (`ato view --serve`).

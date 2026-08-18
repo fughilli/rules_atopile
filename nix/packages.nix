@@ -30,6 +30,10 @@ rec {
   # Exposed as `kicad` for the flake/devShell; null on darwin (system KiCad).
   kicad = kicadApp;
 
+  # FreeRouting 2.2.4 (headless), for the autoroute flow — the nixpkgs pin's
+  # 2.1.0 blocks on a GUI email dialog and routes nothing. See freerouting.nix.
+  freerouting = pkgs.callPackage ./freerouting.nix { };
+
   # The stock footprint `.pretty` libraries — a SEPARATE data package
   # (`kicad.libraries.footprints`), not the broken KiCad app, so it builds on
   # both Linux and darwin. Handed to atopile for the stock fp-lib-table.

@@ -17,7 +17,7 @@
         # `kicad` is null on darwin (nixpkgs KiCad is broken there; atopile uses
         # the system KiCad.app), so only expose it as a package where it exists.
         packages = {
-          inherit (packages) atopile atopile-latest;
+          inherit (packages) atopile atopile-latest freerouting;
           default = packages.atopile;
         } // lib.optionalAttrs (packages.kicad != null) {
           inherit (packages) kicad;

@@ -55,7 +55,22 @@ nix_pkg.file(
     ],
     repo = "@nixpkgs",
 )
-use_repo(nix_pkg, "atopile", "kicad")
+
+# FreeRouting: KiCad's autorouter is this external tool. Built from
+# //nix:freerouting.nix (pinned 2.2.4 — the nixpkgs pin's 2.1.0 blocks on a GUI
+# email dialog and routes nothing). Cross-platform Java; only referenced by the
+# rules when a project sets `autoroute = True`, so it isn't fetched otherwise.
+nix_pkg.file(
+    name = "freerouting",
+    attr = "freerouting",
+    file = "//nix:bazel-atopile.nix",
+    file_deps = [
+        "//nix:packages.nix",
+        "//nix:freerouting.nix",
+    ],
+    repo = "@nixpkgs",
+)
+use_repo(nix_pkg, "atopile", "kicad", "freerouting")
 
 # --- Toolchain registration -------------------------------------------------
 # Nix toolchains first so they win resolution; the host toolchain stays

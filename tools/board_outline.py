@@ -87,6 +87,24 @@ def main() -> int:
     for s, e, x, y, rest in sorted(spans, key=lambda t: t[0], reverse=True):
         text = text[:s] + f"(at {x + dx:.4f} {y + dy:.4f}{rest})" + text[e:]
 
+    # Also translate any routed geometry so traces stay aligned when this runs
+    # AFTER autorouting: top-level (segment (start …)(end …)) and (via (at …)).
+    # (fp_line start/end inside footprints are relative and must NOT move — they
+    # follow their translated footprint; we only match segment/via here.)
+    def _shift(m, n):
+        return "%s%.4f %.4f%s" % (m.group(1), float(m.group(2)) + dx,
+                                  float(m.group(3)) + dy, m.group(4))
+
+    text = re.sub(
+        r"(\(segment\s+\(start\s+)(-?[\d.]+)\s+(-?[\d.]+)(\))",
+        lambda m: _shift(m, 0), text)
+    text = re.sub(
+        r"(\(end\s+)(-?[\d.]+)\s+(-?[\d.]+)(\)\s*\(width)",
+        lambda m: _shift(m, 0), text)
+    text = re.sub(
+        r"(\(via\s+\(at\s+)(-?[\d.]+)\s+(-?[\d.]+)(\))",
+        lambda m: _shift(m, 0), text)
+
     # Tight custom sheet sized to the board.
     text, n = re.subn(r'\(paper\s+"[^"]*"(?:\s+[\d.]+\s+[\d.]+)?\)',
                       f'(paper "User" {W:.3f} {H:.3f})', text, count=1)

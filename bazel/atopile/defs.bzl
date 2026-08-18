@@ -49,6 +49,7 @@ def atopile_project(
         deps = [],
         frozen = True,
         outline_margin_mm = 0,
+        autoroute = False,
         visibility = None,
         tags = []):
     """Declare an atopile project and its build/export/view sub-targets.
@@ -63,6 +64,9 @@ def atopile_project(
       outline_margin_mm: if > 0, the `.pdf` target frames an auto-placed board
         with an Edge.Cuts outline + tight page (this mm margin) so the export
         isn't a near-blank A4 sheet. For hand-outlined boards leave it 0.
+      autoroute: if True, the `.pdf` target runs a headless FreeRouting pass over
+        the placed board (via KiCad's pcbnew Python) so it has traces — a fully
+        no-human end-to-end flow. Pulls `@freerouting`. See tools/autoroute.py.
       visibility: standard Bazel visibility.
       tags: extra tags applied to every generated target.
     """
@@ -108,10 +112,14 @@ def atopile_project(
         )
 
     # Board layout PDF (kicad-cli; atopile has no schematic sheet — see docs).
+    # `freerouting` is set only when autoroute is on, so @freerouting isn't
+    # fetched otherwise.
     atopile_pdf(
         name = name + ".pdf",
         out = outdir + ".pdf",
         frozen = frozen,
         outline_margin_mm = outline_margin_mm,
+        autoroute = autoroute,
+        freerouting = "@freerouting//:bin/freerouting" if autoroute else None,
         **common
     )

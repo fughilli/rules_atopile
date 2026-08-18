@@ -4,6 +4,7 @@ exports_files(
         "bazel-atopile.nix",
         "packages.nix",
         "atopile.nix",
+        "freerouting.nix",
     ],
     visibility = ["//visibility:public"],
 )

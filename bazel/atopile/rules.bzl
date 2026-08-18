@@ -79,7 +79,14 @@ def _root_setup(ctx):
     return "\n".join([
         'SRC="$(cd "$(dirname "{ay}")" && pwd)"'.format(ay = ctx.file.ato_yaml.path),
         'ROOT="$(mktemp -d)"',
-        'cp -RL "$SRC"/. "$ROOT"/',
+        # Copy each top-level entry EXCEPT the generated build/ and .ato dirs:
+        # a prior `ato build`/`.view` run in the source tree leaves atopile's
+        # dangling `build/logs/latest` symlink, which `cp -RL` (dereference)
+        # can't stat. `-RL` resolves the execroot's source symlinks to real
+        # files; the fallback keeps symlinks if a stray dangling one remains.
+        "( shopt -s dotglob nullglob; for _e in \"$SRC\"/*; do " +
+        "case \"$(basename \"$_e\")\" in build|.ato) continue ;; esac; " +
+        "cp -RL \"$_e\" \"$ROOT\"/ 2>/dev/null || cp -R \"$_e\" \"$ROOT\"/; done )",
     ])
 
 def _fp_table_setup(ctx):
@@ -99,6 +106,38 @@ def _fp_table_setup(ctx):
         '_fp_tbl="$(dirname "$(dirname "$_ato_real")")/share/atopile/stock-fp-lib-table"',
         'if [ -f "$_fp_tbl" ]; then cp -f "$_fp_tbl" "$ROOT/{ld}/fp-lib-table"; fi'.format(ld = layout_dir),
     ])
+
+def _autoroute_step(ctx, pcb):
+    # Optional headless autorouting (opt in via `autoroute`): run FreeRouting
+    # over the placed board via KiCad's pcbnew Python (DSN out -> route -> SES
+    # in), so the exported board actually has traces — see tools/autoroute.py.
+    # Returns (shell, [extra input Files]). KiCad's autorouter *is* FreeRouting,
+    # and only KiCad's own Python has the Specctra DSN/SES bindings (kicad-cli /
+    # kicad-small don't), so we resolve a pcbnew-capable interpreter at action
+    # time: $KICAD_PYTHON, the system KiCad.app (macOS), then a plain python3
+    # (Linux w/ a full nixpkgs kicad). `no-sandbox` lets those resolve.
+    if not ctx.attr.autoroute or not ctx.file.freerouting:
+        return "", []
+    fr = ctx.file.freerouting
+    ap = ctx.file._autoroute
+    lines = [
+        "_FR=\"$(cd \"$(dirname '%s')\" && pwd)/$(basename '%s')\"" % (fr.path, fr.path),
+        '_PCBNEW_PY=""',
+        'for _c in "${KICAD_PYTHON:-}" ' +
+        '"/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3" ' +
+        'python3; do',
+        '  [ -n "$_c" ] || continue',
+        '  if command -v "$_c" >/dev/null 2>&1 && "$_c" -c "import pcbnew" >/dev/null 2>&1; then _PCBNEW_PY="$_c"; break; fi',
+        'done',
+        'if [ -n "$_PCBNEW_PY" ]; then',
+        '  "$_PCBNEW_PY" "%s" "$ROOT/%s" "$_FR"' % (ap.path, pcb),
+        'else',
+        # Degrade gracefully: skip routing (board just has no traces) rather than
+        # failing on a platform without KiCad's Python (e.g. kicad-small on Linux).
+        '  echo "autoroute: skipped — no pcbnew-capable python (need KiCad python; set KICAD_PYTHON)" >&2',
+        'fi',
+    ]
+    return "\n".join(lines), [fr, ap]
 
 def _run_ato(build, target, frozen):
     frozen_flag = "--frozen" if frozen else ""
@@ -165,10 +204,18 @@ def _atopile_pdf_impl(ctx):
     pcb = "elec/layout/{b}/{b}.kicad_pcb".format(b = ctx.attr.build)
     frozen = "--frozen" if ctx.attr.frozen else ""
 
-    # Optional: frame an auto-placed board (outline + tight page) so the export
-    # isn't a near-blank A4 sheet — see tools/board_outline.py. `> 0` enables it.
-    outline = ""
     inputs = [_project_inputs(ctx, info)]
+
+    # Autoroute the placed board first (FreeRouting 2.2.4 doesn't need a
+    # pre-existing outline). Adds trace segments. See tools/autoroute.py.
+    autoroute, ar_inputs = _autoroute_step(ctx, pcb)
+    if ar_inputs:
+        inputs.append(depset(ar_inputs))
+
+    # Then frame it (outline + tight page): board_outline.py translates the
+    # footprints AND the routed segments/vias together, so traces stay aligned.
+    # `> 0` enables it. See tools/board_outline.py.
+    outline = ""
     if ctx.attr.outline_margin_mm > 0:
         inputs.append(depset([ctx.file._board_outline]))
         outline = 'python3 "{s}" "$ROOT/{pcb}" {m}'.format(
@@ -177,6 +224,14 @@ def _atopile_pdf_impl(ctx):
             m = ctx.attr.outline_margin_mm,
         )
 
+    build_ato = '( cd "$ROOT" && "$ATO" build -b {build} {frozen} )'.format(build = ctx.attr.build, frozen = frozen)
+
+    # Autorouting needs the pads' nets, but atopile's FIRST build only creates
+    # the layout (pads on net 0) — a second build pushes the nets onto it. So
+    # build twice when autorouting. (The base build reload is idempotent here,
+    # unlike mfg-data's post-pcb DRC.)
+    second_build = build_ato if ctx.attr.autoroute else ""
+
     cmd = "\n".join([
         "set -euo pipefail",
         _home_export(),
@@ -184,7 +239,9 @@ def _atopile_pdf_impl(ctx):
         _ato_setup(info),
         _path_export(info),
         _fp_table_setup(ctx),
-        '( cd "$ROOT" && "$ATO" build -b {build} {frozen} )'.format(build = ctx.attr.build, frozen = frozen),
+        build_ato,
+        second_build,
+        autoroute,
         outline,
         '"{kc}" pcb export pdf "$ROOT/{pcb}" -o "{out}" --layers "{layers}"'.format(
             kc = _kicad_cmd(info),
@@ -224,6 +281,22 @@ _atopile_pdf = rule(
         ),
         "_board_outline": attr.label(
             default = "//tools:board_outline.py",
+            allow_single_file = True,
+        ),
+        "autoroute": attr.bool(
+            default = False,
+            doc = "Run a headless FreeRouting pass over the placed board (via " +
+                  "KiCad's pcbnew Python) so the export has traces. See " +
+                  "tools/autoroute.py. Needs `freerouting` set + a pcbnew python.",
+        ),
+        "freerouting": attr.label(
+            allow_single_file = True,
+            doc = "FreeRouting binary (e.g. @freerouting//:bin/freerouting); set " +
+                  "by the macro only when autoroute is on, so it's not fetched " +
+                  "otherwise.",
+        ),
+        "_autoroute": attr.label(
+            default = "//tools:autoroute.py",
             allow_single_file = True,
         ),
         "frozen": attr.bool(default = True),
