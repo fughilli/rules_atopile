@@ -146,19 +146,28 @@ def _autoroute_step(ctx, pcb):
     return "\n".join(lines), [fr, ap]
 
 def _picker_setup(ctx):
-    # Run the local picker as a sidecar (atopile 0.15.x requires a components API
-    # for every pick). Returns (start, stop, [input Files]). `source`-ing the
-    # helper sets ATO_SERVICES_COMPONENTS_URL + $_ATO_PICKER_PID in this shell;
-    # footprints come from EasyEDA unless cached under elec/src/parts. Bazel
-    # tears down the action's process tree, so the sidecar can't leak.
-    if not ctx.attr.picker:
+    # Run the local picker as a Bazel-managed sidecar (atopile 0.15.x requires a
+    # components API for every pick). The interpreter is the nix `python3` the
+    # rule depends on (`picker_python`, set by the macro only when `picker` is
+    # on) — NOT the ambient `python3`, whose version varies (macOS ships 3.9).
+    # The picker binds a free port and writes it to a file we read back; Bazel
+    # tears down the action's process tree, so the sidecar can't leak. Returns
+    # (start, stop, [input Files]). Footprints come from EasyEDA unless cached
+    # under elec/src/parts.
+    if not ctx.attr.picker or not ctx.file.picker_python:
         return "", "", []
-    files = ctx.files._picker
-    sidecar = [f for f in files if f.basename == "sidecar.sh"][0]
-    server = [f for f in files if f.basename == "server.py"][0]
-    start = 'source "%s" "%s"' % (sidecar.path, server.path)
+    server = [f for f in ctx.files._picker if f.basename == "server.py"][0]
+    lines = [
+        '_PICKER_PY="$(readlink -f \'%s\' 2>/dev/null || echo \'%s\')"' % (ctx.file.picker_python.path, ctx.file.picker_python.path),
+        '_ATO_PORTFILE="$(mktemp)"',
+        '"$_PICKER_PY" "%s" 0 "$_ATO_PORTFILE" >/dev/null 2>&1 &' % server.path,
+        '_ATO_PICKER_PID=$!',
+        'for _i in $(seq 1 100); do [ -s "$_ATO_PORTFILE" ] && break; sleep 0.1; done',
+        '[ -s "$_ATO_PORTFILE" ] || { echo "local picker did not come up" >&2; exit 1; }',
+        'export ATO_SERVICES_COMPONENTS_URL="http://127.0.0.1:$(cat "$_ATO_PORTFILE")"',
+    ]
     stop = 'kill "${_ATO_PICKER_PID:-}" 2>/dev/null || true'
-    return start, stop, files
+    return "\n".join(lines), stop, ctx.files._picker + [ctx.file.picker_python]
 
 def _run_ato(build, target, frozen):
     frozen_flag = "--frozen" if frozen else ""
@@ -213,6 +222,7 @@ _atopile_artifact = rule(
         "out": attr.output(mandatory = True),
         "picker": attr.bool(default = False, doc = "Run the local picker sidecar (0.15.x picking)."),
         "_picker": attr.label(default = "//tools/atopile-picker:picker"),
+        "picker_python": attr.label(allow_single_file = True, cfg = "exec", doc = "nix python3 to run the picker (macro-set when picker on)."),
         "frozen": attr.bool(default = True),
     },
     toolchains = [TOOLCHAIN_TYPE],
@@ -341,6 +351,7 @@ _atopile_pdf = rule(
         "_picker": attr.label(
             default = "//tools/atopile-picker:picker",
         ),
+        "picker_python": attr.label(allow_single_file = True, cfg = "exec", doc = "nix python3 to run the picker (macro-set when picker on)."),
         "frozen": attr.bool(default = True),
     },
     toolchains = [TOOLCHAIN_TYPE],
@@ -400,6 +411,7 @@ _atopile_build = rule(
         "build": attr.string(mandatory = True),
         "picker": attr.bool(default = False, doc = "Run the local picker sidecar (0.15.x picking)."),
         "_picker": attr.label(default = "//tools/atopile-picker:picker"),
+        "picker_python": attr.label(allow_single_file = True, cfg = "exec", doc = "nix python3 to run the picker (macro-set when picker on)."),
         "frozen": attr.bool(default = True),
     },
     toolchains = [TOOLCHAIN_TYPE],

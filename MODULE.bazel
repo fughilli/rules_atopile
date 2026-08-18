@@ -70,7 +70,17 @@ nix_pkg.file(
     ],
     repo = "@nixpkgs",
 )
-use_repo(nix_pkg, "atopile", "kicad", "freerouting")
+
+# A nix python3 to run the local picker sidecar (tools/atopile-picker) — so its
+# interpreter is Bazel-provided/hermetic like the other tools, not the ambient
+# `python3` (whose version varies: macOS ships 3.9). Only referenced when a
+# project sets `picker = True`.
+nix_pkg.attr(
+    name = "python3",
+    attr = "python3",
+    repo = "@nixpkgs",
+)
+use_repo(nix_pkg, "atopile", "kicad", "freerouting", "python3")
 
 # --- Toolchain registration -------------------------------------------------
 # Nix toolchains first so they win resolution; the host toolchain stays

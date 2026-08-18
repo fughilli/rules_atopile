@@ -190,11 +190,21 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    host, port = "127.0.0.1", int(sys.argv[1]) if len(sys.argv) > 1 else 8099
-    print(f"atopile local picker on http://{host}:{port} "
+    # Usage: server.py [port] [portfile]
+    # port 0 => let the OS pick a free port; write the actual port to `portfile`
+    # (if given) so a Bazel-managed sidecar can capture it without a port-finder.
+    host = "127.0.0.1"
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8099
+    portfile = sys.argv[2] if len(sys.argv) > 2 else None
+    httpd = ThreadingHTTPServer((host, port), Handler)
+    actual = httpd.server_address[1]
+    if portfile:
+        with open(portfile, "w", encoding="utf-8") as f:
+            f.write(str(actual))
+    print(f"atopile local picker on http://{host}:{actual} "
           f"({sum(len(v) for k, v in CATALOG.items() if isinstance(v, list))} parts)",
           file=sys.stderr)
-    ThreadingHTTPServer((host, port), Handler).serve_forever()
+    httpd.serve_forever()
 
 
 if __name__ == "__main__":

@@ -80,6 +80,9 @@ def atopile_project(
         deps = deps,
         build = build,
         picker = picker,
+        # nix python3 to run the picker sidecar; only referenced (fetched) when
+        # picking is on.
+        picker_python = "@python3//:bin/python3" if picker else None,
         visibility = visibility,
         tags = tags,
     )
