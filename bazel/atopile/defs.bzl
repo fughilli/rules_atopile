@@ -4,16 +4,24 @@
 
 `atopile_project` declares a design and fans out a family of sub-targets:
 
-    //pkg:name            `ato build`  — verify the design compiles/builds
+    //pkg:name            bazel build  — pick + lay out -> resolved .kicad_pcb
     //pkg:name.view       bazel run    — open the layout in the KiCad editor
     //pkg:name.schematic  bazel run    — serve the interactive block diagram
     //pkg:name.pdf        bazel build  — board layout -> PDF (via kicad-cli)
-    //pkg:name.gerber     bazel build  — Gerber manufacturing zip (ato mfg-data)
+    //pkg:name.gerber     bazel build  — Gerber + drill dir (via kicad-cli)
     //pkg:name.bom        bazel build  — bill of materials CSV
     //pkg:name.glb        bazel build  — 3D PCBA model (.glb)
     //pkg:name.step       bazel build  — 3D PCBA model (.step)
     //pkg:name.svg        bazel build  — 2D board render (.svg)
     //pkg:name.png        bazel build  — 3D board render (.png)
+
+Network is scoped to ONE action. The base `//pkg:name` target is the only
+non-hermetic step: it runs the local picker + `ato build` (part-picking +
+EasyEDA footprint fetch) + optional autoroute/framing, emitting the resolved,
+self-contained `.kicad_pcb`. `.pdf` and `.gerber` are then HERMETIC — they run
+only `kicad-cli` on that board, no network. (The `.bom`/`.glb`/`.step`/`.svg`/
+`.png` targets are produced by atopile's own build targets and so still pick;
+they're opt-in extras. Prefer `.pdf`/`.gerber` for the hermetic mfg flow.)
 
 `atopile_library` wraps atopile's reusable `module`/`component` concept so
 designs can share components across packages via `deps`.
@@ -22,7 +30,8 @@ designs can share components across packages via `deps`.
 load(
     ":rules.bzl",
     "atopile_artifact",
-    "atopile_build",
+    "atopile_gerber",
+    "atopile_layout",
     "atopile_pdf",
     "atopile_run",
 )
@@ -31,9 +40,10 @@ load(":rules.bzl", _atopile_library = "atopile_library")
 # Re-export the library rule under its public name.
 atopile_library = _atopile_library
 
-# (atopile build target, output filename suffix, source artifact suffix).
+# (atopile build target, output filename suffix, source artifact suffix). These
+# go through atopile's own build targets (they pick); the hermetic mfg outputs
+# (.pdf/.gerber) are derived from the base layout via kicad-cli instead.
 _ARTIFACTS = [
-    ("gerber", "mfg-data", ".gerber.zip", ".gerber.zip"),
     ("bom", "bom", ".bom.csv", ".bom.csv"),
     ("glb", "glb", ".glb", ".pcba.glb"),
     ("step", "step", ".step", ".pcba.step"),
@@ -87,14 +97,25 @@ def atopile_project(
         tags = tags,
     )
 
-    # Base target: does the design build?
-    atopile_build(name = name, frozen = frozen, **common)
+    # Base target: the ONE non-hermetic step — pick + lay out the board (part
+    # picking + EasyEDA fetch + optional autoroute/framing) into a resolved,
+    # self-contained .kicad_pcb that the hermetic exports below consume. Building
+    # `//pkg:name` both verifies the design and yields that board.
+    atopile_layout(
+        name = name,
+        frozen = frozen,
+        outline_margin_mm = outline_margin_mm,
+        autoroute = autoroute,
+        freerouting = "@freerouting//:bin/freerouting" if autoroute else None,
+        **common
+    )
 
     # Interactive targets (bazel run). `args_` is atopile's argv.
     _run_common = dict(ato_yaml = ato_yaml, srcs = srcs, deps = deps, build = build, visibility = visibility, tags = tags)
     atopile_run(
         name = name + ".view",
         args_ = ["build", "-b", build, "--open"],
+        picker = picker,
         **_run_common
     )
     # 0.15.x has no standalone diagram viewer; `ato serve core` starts the
@@ -119,15 +140,19 @@ def atopile_project(
             **common
         )
 
-    # Board layout PDF (kicad-cli; atopile has no schematic sheet — see docs).
-    # `freerouting` is set only when autoroute is on, so @freerouting isn't
-    # fetched otherwise.
+    # Hermetic mfg exports: kicad-cli on the base target's resolved .kicad_pcb,
+    # no network/picker. (atopile has no schematic sheet — the PDF is the board
+    # layout; see docs.)
     atopile_pdf(
         name = name + ".pdf",
+        layout = ":" + name,
         out = outdir + ".pdf",
-        frozen = frozen,
-        outline_margin_mm = outline_margin_mm,
-        autoroute = autoroute,
-        freerouting = "@freerouting//:bin/freerouting" if autoroute else None,
-        **common
+        visibility = visibility,
+        tags = tags,
+    )
+    atopile_gerber(
+        name = name + ".gerber",
+        layout = ":" + name,
+        visibility = visibility,
+        tags = tags,
     )

@@ -1,0 +1,4 @@
+# blinky is an auto-placed, code-only board (frozen = False): its layout is
+# regenerated (with fresh UUIDs) on every build, so it is not a committed
+# fixed point. Hand-placed/frozen projects commit elec/layout/**/*.kicad_pcb.
+elec/layout/

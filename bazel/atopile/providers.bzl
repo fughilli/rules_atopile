@@ -28,3 +28,13 @@ AtopileProjectInfo = provider(
         "transitive_srcs": "depset[File]: project sources plus transitive library sources.",
     },
 )
+
+AtopileLayoutInfo = provider(
+    doc = "The resolved board from the (non-hermetic) pick/layout step. Downstream " +
+          "export rules consume the `.kicad_pcb` with a hermetic `kicad-cli`, so " +
+          "the network (part-picking + EasyEDA) is scoped to the layout action only.",
+    fields = {
+        "pcb": "File: the resolved, self-contained <build>.kicad_pcb (footprints embedded).",
+        "bom": "File or None: the atopile BOM CSV (from picking), if produced.",
+    },
+)

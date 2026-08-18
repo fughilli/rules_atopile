@@ -19,8 +19,9 @@ the authoritative guide to the toolchain and rules.
 
 ```bash
 nix develop                                  # ato, kicad-cli, bazel on PATH
-bazel build //examples/blinky:blinky.gerber   # Gerber manufacturing zip
-bazel build //examples/blinky:blinky.pdf      # board layout PDF
+bazel build //examples/blinky:blinky          # pick + lay out -> resolved .kicad_pcb (the network step)
+bazel build //examples/blinky:blinky.pdf      # board layout PDF   (hermetic: kicad-cli on the .kicad_pcb)
+bazel build //examples/blinky:blinky.gerber   # Gerber + drill dir (hermetic: kicad-cli on the .kicad_pcb)
 bazel run   //examples/blinky:blinky.view     # open in KiCad
 bazel run   //examples/blinky:blinky.schematic  # interactive block diagram
 ```
@@ -56,17 +57,23 @@ bazel run   //examples/blinky:blinky.schematic  # interactive block diagram
   sign-in; the hosted API still does), and the `ato` wrapper sets
   `OPENSSL_armcap=0` + `ATO_STOCK_FP_LIB_TABLE`. Build actions set `HOME`
   (kicad-cli) and make the isolated copy writable (0.15.x rewrites the fp-lib-table).
-- Artifact actions are `local` + `no-sandbox` + `requires-network` on purpose
-  (part-picking / registry / EasyEDA footprints). An auto-placed, code-only board
-  gets fresh random UUIDs every build, so it is **not** a `--frozen` fixed point:
-  the example builds `frozen = False`. Commit + `--frozen` is for layouts you
-  hand-place and save in KiCad.
+- **Network is scoped to ONE action.** The base `//pkg:name` target
+  (`atopile_layout`) is the only `requires-network` step: it picks parts + fetches
+  EasyEDA footprints + optionally autoroutes/frames, emitting a resolved,
+  self-contained `<name>.kicad_pcb`. `.pdf` and `.gerber` then run **only
+  `kicad-cli`** on that board — `{local, no-sandbox}`, no network — so the mfg
+  outputs are hermetic. (`.bom`/`.glb`/`.step`/`.svg`/`.png` still go through
+  atopile's own build targets and so still pick; prefer `.pdf`/`.gerber`.)
+- An auto-placed, code-only board gets fresh random UUIDs every build, so it is
+  **not** a `--frozen` fixed point: the example builds `frozen = False`. Commit +
+  `--frozen` is for layouts you hand-place and save in KiCad.
 - Commit `elec/layout/**/*.kicad_pcb` only for frozen (hand-placed) projects;
   git-ignore `build/`, `.ato/`, and generated `fp-lib-table`.
 - atopile has no schematic sheet (no `.kicad_sch`/`.kicad_pro`): `.pdf` is the
   board layout; KiCad's "open schematic" button has nothing to show — expected.
   `.schematic` runs `ato serve core` (0.15.x backend the IDE/web app connect to).
-- `atopile_project(autoroute = True)` gives the `.pdf` real traces with no human
-  in the loop: build twice (push nets) → headless FreeRouting via KiCad's pcbnew
-  Python → frame. FreeRouting is pinned to 2.2.4 + a Temurin JRE 25
+- `atopile_project(autoroute = True)` gives the board real traces with no human
+  in the loop (part of the base layout step, so `.pdf`/`.gerber` inherit them):
+  build twice (push nets) → headless FreeRouting via KiCad's pcbnew Python →
+  frame. FreeRouting is pinned to 2.2.4 + a Temurin JRE 25
   (`nix/freerouting.nix`); nixpkgs' 2.1.0 blocks on a GUI dialog. See rules §10.

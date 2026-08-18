@@ -8,7 +8,7 @@ collects the declared outputs, while reproducibility comes from (a) a pinned
 which forbids atopile from mutating that layout mid-build.
 """
 
-load(":providers.bzl", "AtopileLibraryInfo", "AtopileProjectInfo", "AtopileToolchainInfo")
+load(":providers.bzl", "AtopileLayoutInfo", "AtopileLibraryInfo", "AtopileProjectInfo", "AtopileToolchainInfo")
 
 TOOLCHAIN_TYPE = "//bazel/atopile:toolchain_type"
 
@@ -228,30 +228,29 @@ _atopile_artifact = rule(
     toolchains = [TOOLCHAIN_TYPE],
 )
 
-# -- pdf rule: export the board layout to PDF via kicad-cli --------------------
+# -- layout rule: THE pick step (non-hermetic) -> resolved .kicad_pcb ----------
+#
+# This is the ONE action that touches the network: it runs the local picker
+# sidecar + `ato build` (part-picking + EasyEDA footprint download) + optional
+# autoroute + framing, and emits the resolved, self-contained <build>.kicad_pcb
+# (footprints embedded) plus the BOM. Every export below consumes that pcb with
+# a hermetic `kicad-cli` — so the network is scoped to just this action.
 
-def _atopile_pdf_impl(ctx):
+def _atopile_layout_impl(ctx):
     info = _toolchain(ctx)
-    out = ctx.outputs.out
+    pcb_out = ctx.actions.declare_file(ctx.label.name + ".kicad_pcb")
+    bom_out = ctx.actions.declare_file(ctx.label.name + ".bom.csv")
 
-    # Export the PDF from the canonical board layout atopile writes/refreshes at
-    # elec/layout/<build>/<build>.kicad_pcb. (The mfg-data copies under build/
-    # are timestamped, so their name isn't predictable.) A base `ato build`
-    # produces/updates that layout; no need for the heavier mfg-data target.
     pcb = "elec/layout/{b}/{b}.kicad_pcb".format(b = ctx.attr.build)
+    bom_src = _OUTPUT_BASE.format(build = ctx.attr.build) + ".bom.csv"
     frozen = "--frozen" if ctx.attr.frozen else ""
 
     inputs = [_project_inputs(ctx, info)]
 
-    # Autoroute the placed board first (FreeRouting 2.2.4 doesn't need a
-    # pre-existing outline). Adds trace segments. See tools/autoroute.py.
     autoroute, ar_inputs = _autoroute_step(ctx, pcb)
     if ar_inputs:
         inputs.append(depset(ar_inputs))
 
-    # Then frame it (outline + tight page): board_outline.py translates the
-    # footprints AND the routed segments/vias together, so traces stay aligned.
-    # `> 0` enables it. See tools/board_outline.py.
     outline = ""
     if ctx.attr.outline_margin_mm > 0:
         inputs.append(depset([ctx.file._board_outline]))
@@ -261,7 +260,6 @@ def _atopile_pdf_impl(ctx):
             m = ctx.attr.outline_margin_mm,
         )
 
-    # Local picker sidecar (atopile 0.15.x picks against a components API).
     picker_start, picker_stop, picker_files = _picker_setup(ctx)
     if picker_files:
         inputs.append(depset(picker_files))
@@ -269,9 +267,7 @@ def _atopile_pdf_impl(ctx):
     build_ato = '( cd "$ROOT" && "$ATO" build -b {build} {frozen} )'.format(build = ctx.attr.build, frozen = frozen)
 
     # Autorouting needs the pads' nets, but atopile's FIRST build only creates
-    # the layout (pads on net 0) — a second build pushes the nets onto it. So
-    # build twice when autorouting. (The base build reload is idempotent here,
-    # unlike mfg-data's post-pcb DRC.)
+    # the layout (pads on net 0) — a second build pushes the nets onto it.
     second_build = build_ato if ctx.attr.autoroute else ""
 
     cmd = "\n".join([
@@ -287,9 +283,63 @@ def _atopile_pdf_impl(ctx):
         picker_stop,
         autoroute,
         outline,
-        '"{kc}" pcb export pdf "$ROOT/{pcb}" -o "{out}" --layers "{layers}"'.format(
+        'cp -f "$ROOT/{pcb}" "{o}"'.format(pcb = pcb, o = pcb_out.path),
+        'if [ -f "$ROOT/{b}" ]; then cp -f "$ROOT/{b}" "{o}"; else : > "{o}"; fi'.format(b = bom_src, o = bom_out.path),
+    ])
+
+    ctx.actions.run_shell(
+        outputs = [pcb_out, bom_out],
+        inputs = depset(transitive = inputs),
+        command = cmd,
+        mnemonic = "AtopileLayout",
+        progress_message = "atopile pick + layout -> %s" % pcb_out.short_path,
+        use_default_shell_env = True,
+        execution_requirements = {"local": "1", "no-sandbox": "1", "requires-network": "1"},
+    )
+    transitive = [dep[AtopileLibraryInfo].transitive_srcs for dep in ctx.attr.deps]
+    return [
+        DefaultInfo(files = depset([pcb_out])),
+        AtopileLayoutInfo(pcb = pcb_out, bom = bom_out),
+        AtopileProjectInfo(
+            build_name = ctx.attr.build,
+            ato_yaml = ctx.file.ato_yaml,
+            transitive_srcs = depset(ctx.files.srcs, transitive = transitive),
+        ),
+    ]
+
+_atopile_layout = rule(
+    implementation = _atopile_layout_impl,
+    attrs = {
+        "ato_yaml": attr.label(allow_single_file = True, mandatory = True),
+        "srcs": attr.label_list(allow_files = True),
+        "deps": attr.label_list(providers = [AtopileLibraryInfo]),
+        "build": attr.string(mandatory = True),
+        "outline_margin_mm": attr.int(default = 0, doc = "Frame the board (see tools/board_outline.py) if > 0."),
+        "_board_outline": attr.label(default = "//tools:board_outline.py", allow_single_file = True),
+        "autoroute": attr.bool(default = False, doc = "Headless FreeRouting pass (see tools/autoroute.py)."),
+        "freerouting": attr.label(allow_single_file = True, doc = "FreeRouting binary; macro-set when autoroute on."),
+        "_autoroute": attr.label(default = "//tools:autoroute.py", allow_single_file = True),
+        "picker": attr.bool(default = False, doc = "Run the local picker sidecar (0.15.x picking)."),
+        "_picker": attr.label(default = "//tools/atopile-picker:picker"),
+        "picker_python": attr.label(allow_single_file = True, cfg = "exec", doc = "nix python3 to run the picker (macro-set when picker on)."),
+        "frozen": attr.bool(default = True),
+    },
+    toolchains = [TOOLCHAIN_TYPE],
+)
+
+# -- pdf rule: HERMETIC export of a resolved .kicad_pcb via kicad-cli ----------
+
+def _atopile_pdf_impl(ctx):
+    info = _toolchain(ctx)
+    out = ctx.outputs.out
+    pcb = ctx.attr.layout[AtopileLayoutInfo].pcb
+
+    cmd = "\n".join([
+        "set -euo pipefail",
+        _home_export(),
+        '"{kc}" pcb export pdf "{pcb}" -o "{out}" --layers "{layers}"'.format(
             kc = _kicad_cmd(info),
-            pcb = pcb,
+            pcb = pcb.path,
             out = out.path,
             layers = ctx.attr.layers,
         ),
@@ -297,62 +347,65 @@ def _atopile_pdf_impl(ctx):
 
     ctx.actions.run_shell(
         outputs = [out],
-        inputs = depset(transitive = inputs),
+        inputs = depset([pcb], transitive = [_tool_inputs(info)]),
         command = cmd,
         mnemonic = "AtopilePdf",
         progress_message = "atopile board PDF -> %s" % out.short_path,
         use_default_shell_env = True,
-        execution_requirements = {"local": "1", "no-sandbox": "1", "requires-network": "1"},
+        # HERMETIC: only kicad-cli on the resolved pcb — no network, no picker.
+        execution_requirements = {"local": "1", "no-sandbox": "1"},
     )
     return [DefaultInfo(files = depset([out]))]
 
 _atopile_pdf = rule(
     implementation = _atopile_pdf_impl,
     attrs = {
-        "ato_yaml": attr.label(allow_single_file = True, mandatory = True),
-        "srcs": attr.label_list(allow_files = True),
-        "deps": attr.label_list(providers = [AtopileLibraryInfo]),
-        "build": attr.string(mandatory = True),
+        "layout": attr.label(providers = [AtopileLayoutInfo], mandatory = True, doc = "The layout target whose .kicad_pcb to export."),
         "out": attr.output(mandatory = True),
         "layers": attr.string(
             default = "F.Cu,B.Cu,F.Silkscreen,B.Silkscreen,F.Mask,B.Mask,Edge.Cuts",
         ),
-        "outline_margin_mm": attr.int(
-            default = 0,
-            doc = "If > 0, frame the board with an Edge.Cuts outline + tight page " +
-                  "(mm margin) before export — for auto-placed boards with no " +
-                  "hand-drawn outline. See tools/board_outline.py.",
-        ),
-        "_board_outline": attr.label(
-            default = "//tools:board_outline.py",
-            allow_single_file = True,
-        ),
-        "autoroute": attr.bool(
-            default = False,
-            doc = "Run a headless FreeRouting pass over the placed board (via " +
-                  "KiCad's pcbnew Python) so the export has traces. See " +
-                  "tools/autoroute.py. Needs `freerouting` set + a pcbnew python.",
-        ),
-        "freerouting": attr.label(
-            allow_single_file = True,
-            doc = "FreeRouting binary (e.g. @freerouting//:bin/freerouting); set " +
-                  "by the macro only when autoroute is on, so it's not fetched " +
-                  "otherwise.",
-        ),
-        "_autoroute": attr.label(
-            default = "//tools:autoroute.py",
-            allow_single_file = True,
-        ),
-        "picker": attr.bool(
-            default = False,
-            doc = "Run the local picker (tools/atopile-picker) as a sidecar during " +
-                  "the build. atopile 0.15.x needs a components API for every pick.",
-        ),
-        "_picker": attr.label(
-            default = "//tools/atopile-picker:picker",
-        ),
-        "picker_python": attr.label(allow_single_file = True, cfg = "exec", doc = "nix python3 to run the picker (macro-set when picker on)."),
-        "frozen": attr.bool(default = True),
+    },
+    toolchains = [TOOLCHAIN_TYPE],
+)
+
+# -- gerber rule: HERMETIC Gerber + drill export via kicad-cli ------------------
+#
+# Manufacturing outputs straight off the resolved .kicad_pcb — kicad-cli only,
+# no network/picker. Emits a directory (tree artifact) of Gerber layers + the
+# Excellon drill files; a fab house consumes the directory (or you zip it).
+# Directory output avoids depending on an ambient `zip`, keeping it hermetic.
+
+def _atopile_gerber_impl(ctx):
+    info = _toolchain(ctx)
+    outdir = ctx.actions.declare_directory(ctx.label.name)
+    pcb = ctx.attr.layout[AtopileLayoutInfo].pcb
+    kc = _kicad_cmd(info)
+
+    cmd = "\n".join([
+        "set -euo pipefail",
+        _home_export(),
+        'mkdir -p "{d}"'.format(d = outdir.path),
+        '"{kc}" pcb export gerbers "{pcb}" -o "{d}/"'.format(kc = kc, pcb = pcb.path, d = outdir.path),
+        '"{kc}" pcb export drill "{pcb}" -o "{d}/"'.format(kc = kc, pcb = pcb.path, d = outdir.path),
+    ])
+
+    ctx.actions.run_shell(
+        outputs = [outdir],
+        inputs = depset([pcb], transitive = [_tool_inputs(info)]),
+        command = cmd,
+        mnemonic = "AtopileGerber",
+        progress_message = "atopile Gerbers -> %s" % outdir.short_path,
+        use_default_shell_env = True,
+        # HERMETIC: only kicad-cli on the resolved pcb — no network, no picker.
+        execution_requirements = {"local": "1", "no-sandbox": "1"},
+    )
+    return [DefaultInfo(files = depset([outdir]))]
+
+_atopile_gerber = rule(
+    implementation = _atopile_gerber_impl,
+    attrs = {
+        "layout": attr.label(providers = [AtopileLayoutInfo], mandatory = True, doc = "The layout target whose .kicad_pcb to export."),
     },
     toolchains = [TOOLCHAIN_TYPE],
 )
@@ -434,6 +487,32 @@ def _atopile_run_impl(ctx):
     runfiles = ctx.runfiles(files = ctx.files.srcs + [ctx.file.ato_yaml])
     if info.ato:
         runfiles = runfiles.merge(ctx.runfiles(files = [info.ato], transitive_files = info.runfiles))
+    if ctx.attr.picker and ctx.files._picker:
+        runfiles = runfiles.merge(ctx.runfiles(files = ctx.files._picker))
+
+    # atopile 0.15.x picks parts on EVERY build — including `ato build --open`
+    # (the .view target). So a build-y run target needs the same local picker
+    # sidecar the build actions use, else picking hits the stale/absent
+    # components URL from ato.yaml. Start it here from runfiles (PATH python3;
+    # server.py is 3.9-compatible), point atopile at it, and reap it on exit.
+    # `serve core` (.schematic) doesn't pick, so it opts out (picker=False) and
+    # keeps exec semantics (Ctrl-C stops the server).
+    picker_block = ""
+    run_line = 'exec "$ATO" @@ARGV@@'
+    if ctx.attr.picker:
+        picker_block = "\n".join([
+            "_SRV=\"$(find -L \"$_rf\" -path '*/atopile-picker/server.py' 2>/dev/null | head -1)\"",
+            "if [ -n \"$_SRV\" ] && command -v python3 >/dev/null 2>&1; then",
+            "  _PF=\"$(mktemp)\"",
+            "  python3 \"$_SRV\" 0 \"$_PF\" >/dev/null 2>&1 &",
+            "  _PICKER_PID=$!",
+            "  trap 'kill \"${_PICKER_PID:-}\" 2>/dev/null || true' EXIT",
+            "  for _i in $(seq 1 100); do [ -s \"$_PF\" ] && break; sleep 0.1; done",
+            "  if [ -s \"$_PF\" ]; then export ATO_SERVICES_COMPONENTS_URL=\"http://127.0.0.1:$(cat \"$_PF\")\"; else echo \"local picker did not come up\" >&2; fi",
+            "fi",
+        ])
+        # Run in foreground (not exec) so the EXIT trap reaps the picker after.
+        run_line = '"$ATO" @@ARGV@@'
 
     # Token-replace (not .format) so shell ${...}/[...] pass through literally.
     script = """#!/usr/bin/env bash
@@ -452,11 +531,16 @@ cd "${BUILD_WORKSPACE_DIRECTORY:-.}/@@PROJECT_DIR@@"
 # Seed the stock fp-lib-table (resolved next to `ato`) so explicit
 # component.footprint ids resolve, same as the build rules do.
 _fptbl="$(python3 -c 'import os,sys;print(os.path.dirname(os.path.dirname(os.path.realpath(sys.argv[1]))))' "$ATO" 2>/dev/null)/share/atopile/stock-fp-lib-table"
-if [ -f "$_fptbl" ]; then mkdir -p "@@LAYOUT_DIR@@"; cp -f "$_fptbl" "@@LAYOUT_DIR@@/fp-lib-table"; fi
+# chmod u+w: the stock table is read-only (nix store) but atopile 0.15.x
+# rewrites the project fp-lib-table while picking (else [Errno 13]).
+if [ -f "$_fptbl" ]; then mkdir -p "@@LAYOUT_DIR@@"; cp -f "$_fptbl" "@@LAYOUT_DIR@@/fp-lib-table"; chmod u+w "@@LAYOUT_DIR@@/fp-lib-table"; fi
 # `ato serve core` (the .schematic target) reads its port from this env var.
 export ATOPILE_CORE_SERVER_PORT="${ATOPILE_CORE_SERVER_PORT:-8080}"
-exec "$ATO" @@ARGV@@
+@@PICKER@@
+@@RUN@@
 """
+    script = script.replace("@@PICKER@@", picker_block)
+    script = script.replace("@@RUN@@", run_line)
     script = script.replace("@@PROJECT_DIR@@", project_dir)
     script = script.replace("@@LAYOUT_DIR@@", layout_dir)
     script = script.replace("@@ARGV@@", " ".join(ctx.attr.args_))
@@ -472,6 +556,8 @@ _atopile_run = rule(
         "deps": attr.label_list(providers = [AtopileLibraryInfo]),
         "build": attr.string(mandatory = True, doc = "build config, for the layout dir."),
         "args_": attr.string_list(mandatory = True, doc = "argv passed to `ato`."),
+        "picker": attr.bool(default = False, doc = "Start the local picker sidecar before running `ato` (needed for build-y targets like .view; 0.15.x picks every build)."),
+        "_picker": attr.label(default = "//tools/atopile-picker:picker"),
     },
     toolchains = [TOOLCHAIN_TYPE],
 )
@@ -515,6 +601,8 @@ atopile_library = rule(
 
 # Re-exported so the public macro file can construct these rules.
 atopile_artifact = _atopile_artifact
+atopile_layout = _atopile_layout
 atopile_pdf = _atopile_pdf
+atopile_gerber = _atopile_gerber
 atopile_build = _atopile_build
 atopile_run = _atopile_run
