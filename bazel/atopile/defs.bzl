@@ -82,7 +82,7 @@ def atopile_project(
     atopile_build(name = name, frozen = frozen, **common)
 
     # Interactive targets (bazel run). `args_` is atopile's argv.
-    _run_common = dict(ato_yaml = ato_yaml, srcs = srcs, deps = deps, visibility = visibility, tags = tags)
+    _run_common = dict(ato_yaml = ato_yaml, srcs = srcs, deps = deps, build = build, visibility = visibility, tags = tags)
     atopile_run(
         name = name + ".view",
         args_ = ["build", "-b", build, "--open"],

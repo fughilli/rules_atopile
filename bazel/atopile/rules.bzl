@@ -290,28 +290,43 @@ def _atopile_run_impl(ctx):
     info = _toolchain(ctx)
     launcher = ctx.actions.declare_file(ctx.label.name + ".sh")
     project_dir = ctx.file.ato_yaml.dirname
+    layout_dir = "elec/layout/{b}".format(b = ctx.attr.build)
 
     # `bazel run` sets BUILD_WORKSPACE_DIRECTORY to the real source root; run
-    # atopile there so it opens/serves the actual project, not a sandbox copy.
-    # These targets use `ato`/`kicad-cli` from PATH (the Nix devShell), which is
-    # the right model for interactive tools.
-    ctx.actions.write(
-        output = launcher,
-        is_executable = True,
-        content = """#!/usr/bin/env bash
+    # atopile there so it opens/serves the actual project (and its layout you can
+    # edit), not a sandbox copy. Prefer the nix toolchain's `ato` from runfiles
+    # so `bazel run …:foo.view` works WITHOUT `nix develop`; fall back to `ato`
+    # on PATH (the host toolchain / dev shell). `ato build --open` finds KiCad
+    # itself (nixpkgs kicad on Linux; the system KiCad.app on macOS).
+    runfiles = ctx.runfiles(files = ctx.files.srcs + [ctx.file.ato_yaml])
+    if info.ato:
+        runfiles = runfiles.merge(ctx.runfiles(files = [info.ato], transitive_files = info.runfiles))
+
+    # Token-replace (not .format) so shell ${...}/[...] pass through literally.
+    script = """#!/usr/bin/env bash
 set -euo pipefail
-cd "${{BUILD_WORKSPACE_DIRECTORY:-.}}/{project_dir}"
-exec {ato} {argv}
-""".format(
-            project_dir = project_dir,
-            ato = info.ato_path,
-            argv = " ".join(ctx.attr.args_),
-        ),
-    )
-    return [DefaultInfo(
-        executable = launcher,
-        runfiles = ctx.runfiles(files = ctx.files.srcs + [ctx.file.ato_yaml]),
-    )]
+# Locate `ato`: the nix toolchain binary in runfiles, else PATH (nix develop).
+_self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+_rf="${RUNFILES_DIR:-${_self}.runfiles}"
+ATO=""
+[ -d "$_rf" ] && ATO="$(find -L "$_rf" -path '*/bin/ato' 2>/dev/null | head -1)"
+[ -n "$ATO" ] || ATO="ato"
+if ! { command -v "$ATO" >/dev/null 2>&1 || [ -x "$ATO" ]; }; then
+  echo "atopile 'ato' not found — run inside 'nix develop', or build with the nix toolchain." >&2
+  exit 127
+fi
+cd "${BUILD_WORKSPACE_DIRECTORY:-.}/@@PROJECT_DIR@@"
+# Seed the stock fp-lib-table (resolved next to `ato`) so explicit
+# component.footprint ids resolve, same as the build rules do.
+_fptbl="$(python3 -c 'import os,sys;print(os.path.dirname(os.path.dirname(os.path.realpath(sys.argv[1]))))' "$ATO" 2>/dev/null)/share/atopile/stock-fp-lib-table"
+if [ -f "$_fptbl" ]; then mkdir -p "@@LAYOUT_DIR@@"; cp -f "$_fptbl" "@@LAYOUT_DIR@@/fp-lib-table"; fi
+exec "$ATO" @@ARGV@@
+"""
+    script = script.replace("@@PROJECT_DIR@@", project_dir)
+    script = script.replace("@@LAYOUT_DIR@@", layout_dir)
+    script = script.replace("@@ARGV@@", " ".join(ctx.attr.args_))
+    ctx.actions.write(output = launcher, is_executable = True, content = script)
+    return [DefaultInfo(executable = launcher, runfiles = runfiles)]
 
 _atopile_run = rule(
     implementation = _atopile_run_impl,
@@ -320,6 +335,7 @@ _atopile_run = rule(
         "ato_yaml": attr.label(allow_single_file = True, mandatory = True),
         "srcs": attr.label_list(allow_files = True),
         "deps": attr.label_list(providers = [AtopileLibraryInfo]),
+        "build": attr.string(mandatory = True, doc = "build config, for the layout dir."),
         "args_": attr.string_list(mandatory = True, doc = "argv passed to `ato`."),
     },
     toolchains = [TOOLCHAIN_TYPE],
