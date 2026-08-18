@@ -6,6 +6,7 @@ filegroup(
     srcs = [
         "server.py",
         "catalog.json",
+        "sidecar.sh",
     ],
     visibility = ["//visibility:public"],
 )

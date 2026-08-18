@@ -50,6 +50,7 @@ def atopile_project(
         frozen = True,
         outline_margin_mm = 0,
         autoroute = False,
+        picker = False,
         visibility = None,
         tags = []):
     """Declare an atopile project and its build/export/view sub-targets.
@@ -78,6 +79,7 @@ def atopile_project(
         srcs = srcs,
         deps = deps,
         build = build,
+        picker = picker,
         visibility = visibility,
         tags = tags,
     )

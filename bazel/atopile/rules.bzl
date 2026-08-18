@@ -87,6 +87,10 @@ def _root_setup(ctx):
         "( shopt -s dotglob nullglob; for _e in \"$SRC\"/*; do " +
         "case \"$(basename \"$_e\")\" in build|.ato) continue ;; esac; " +
         "cp -RL \"$_e\" \"$ROOT\"/ 2>/dev/null || cp -R \"$_e\" \"$ROOT\"/; done )",
+        # Copied files inherit the execroot's read-only perms (nix store), but
+        # atopile 0.15.x WRITES into the tree (fp-lib-table, ingested parts), so
+        # make the private copy writable.
+        'chmod -R u+w "$ROOT" 2>/dev/null || true',
     ])
 
 def _fp_table_setup(ctx):
@@ -104,7 +108,9 @@ def _fp_table_setup(ctx):
         'mkdir -p "$ROOT/{ld}"'.format(ld = layout_dir),
         '_ato_real="$(readlink -f "$(command -v "$ATO")")"',
         '_fp_tbl="$(dirname "$(dirname "$_ato_real")")/share/atopile/stock-fp-lib-table"',
-        'if [ -f "$_fp_tbl" ]; then cp -f "$_fp_tbl" "$ROOT/{ld}/fp-lib-table"; fi'.format(ld = layout_dir),
+        # cp then chmod: the stock table is read-only (nix store) but atopile
+        # 0.15.x rewrites the project fp-lib-table while picking.
+        'if [ -f "$_fp_tbl" ]; then cp -f "$_fp_tbl" "$ROOT/{ld}/fp-lib-table"; chmod u+w "$ROOT/{ld}/fp-lib-table"; fi'.format(ld = layout_dir),
     ])
 
 def _autoroute_step(ctx, pcb):
@@ -139,6 +145,21 @@ def _autoroute_step(ctx, pcb):
     ]
     return "\n".join(lines), [fr, ap]
 
+def _picker_setup(ctx):
+    # Run the local picker as a sidecar (atopile 0.15.x requires a components API
+    # for every pick). Returns (start, stop, [input Files]). `source`-ing the
+    # helper sets ATO_SERVICES_COMPONENTS_URL + $_ATO_PICKER_PID in this shell;
+    # footprints come from EasyEDA unless cached under elec/src/parts. Bazel
+    # tears down the action's process tree, so the sidecar can't leak.
+    if not ctx.attr.picker:
+        return "", "", []
+    files = ctx.files._picker
+    sidecar = [f for f in files if f.basename == "sidecar.sh"][0]
+    server = [f for f in files if f.basename == "server.py"][0]
+    start = 'source "%s" "%s"' % (sidecar.path, server.path)
+    stop = 'kill "${_ATO_PICKER_PID:-}" 2>/dev/null || true'
+    return start, stop, files
+
 def _run_ato(build, target, frozen):
     frozen_flag = "--frozen" if frozen else ""
     return '( cd "$ROOT" && "$ATO" build -b {build} -t {target} {frozen} )'.format(
@@ -154,6 +175,8 @@ def _atopile_artifact_impl(ctx):
     out = ctx.outputs.out
     src = _OUTPUT_BASE.format(build = ctx.attr.build) + ctx.attr.src_suffix
 
+    picker_start, picker_stop, picker_files = _picker_setup(ctx)
+
     cmd = "\n".join([
         "set -euo pipefail",
         _home_export(),
@@ -161,13 +184,15 @@ def _atopile_artifact_impl(ctx):
         _ato_setup(info),
         _path_export(info),
         _fp_table_setup(ctx),
+        picker_start,
         _run_ato(ctx.attr.build, ctx.attr.target, ctx.attr.frozen),
+        picker_stop,
         'cp -f "$ROOT/{src}" "{out}"'.format(src = src, out = out.path),
     ])
 
     ctx.actions.run_shell(
         outputs = [out],
-        inputs = _project_inputs(ctx, info),
+        inputs = depset(transitive = [_project_inputs(ctx, info), depset(picker_files)]),
         command = cmd,
         mnemonic = "AtopileBuild",
         progress_message = "atopile %s -> %s" % (ctx.attr.target, out.short_path),
@@ -186,6 +211,8 @@ _atopile_artifact = rule(
         "target": attr.string(mandatory = True, doc = "atopile build target, e.g. mfg-data."),
         "src_suffix": attr.string(mandatory = True, doc = "e.g. '.gerber.zip'."),
         "out": attr.output(mandatory = True),
+        "picker": attr.bool(default = False, doc = "Run the local picker sidecar (0.15.x picking)."),
+        "_picker": attr.label(default = "//tools/atopile-picker:picker"),
         "frozen": attr.bool(default = True),
     },
     toolchains = [TOOLCHAIN_TYPE],
@@ -224,6 +251,11 @@ def _atopile_pdf_impl(ctx):
             m = ctx.attr.outline_margin_mm,
         )
 
+    # Local picker sidecar (atopile 0.15.x picks against a components API).
+    picker_start, picker_stop, picker_files = _picker_setup(ctx)
+    if picker_files:
+        inputs.append(depset(picker_files))
+
     build_ato = '( cd "$ROOT" && "$ATO" build -b {build} {frozen} )'.format(build = ctx.attr.build, frozen = frozen)
 
     # Autorouting needs the pads' nets, but atopile's FIRST build only creates
@@ -239,8 +271,10 @@ def _atopile_pdf_impl(ctx):
         _ato_setup(info),
         _path_export(info),
         _fp_table_setup(ctx),
+        picker_start,
         build_ato,
         second_build,
+        picker_stop,
         autoroute,
         outline,
         '"{kc}" pcb export pdf "$ROOT/{pcb}" -o "{out}" --layers "{layers}"'.format(
@@ -299,6 +333,14 @@ _atopile_pdf = rule(
             default = "//tools:autoroute.py",
             allow_single_file = True,
         ),
+        "picker": attr.bool(
+            default = False,
+            doc = "Run the local picker (tools/atopile-picker) as a sidecar during " +
+                  "the build. atopile 0.15.x needs a components API for every pick.",
+        ),
+        "_picker": attr.label(
+            default = "//tools/atopile-picker:picker",
+        ),
         "frozen": attr.bool(default = True),
     },
     toolchains = [TOOLCHAIN_TYPE],
@@ -311,6 +353,8 @@ def _atopile_build_impl(ctx):
     marker = ctx.actions.declare_file(ctx.label.name + ".buildinfo")
     frozen = "--frozen" if ctx.attr.frozen else ""
 
+    picker_start, picker_stop, picker_files = _picker_setup(ctx)
+
     cmd = "\n".join([
         "set -euo pipefail",
         _home_export(),
@@ -318,16 +362,18 @@ def _atopile_build_impl(ctx):
         _ato_setup(info),
         _path_export(info),
         _fp_table_setup(ctx),
+        picker_start,
         '( cd "$ROOT" && "$ATO" build -b {build} {frozen} )'.format(
             build = ctx.attr.build,
             frozen = frozen,
         ),
+        picker_stop,
         'echo "atopile build {build} OK" > "{out}"'.format(build = ctx.attr.build, out = marker.path),
     ])
 
     ctx.actions.run_shell(
         outputs = [marker],
-        inputs = _project_inputs(ctx, info),
+        inputs = depset(transitive = [_project_inputs(ctx, info), depset(picker_files)]),
         command = cmd,
         mnemonic = "AtopileBuildAll",
         progress_message = "atopile build %s" % ctx.attr.build,
@@ -352,6 +398,8 @@ _atopile_build = rule(
         "srcs": attr.label_list(allow_files = True),
         "deps": attr.label_list(providers = [AtopileLibraryInfo]),
         "build": attr.string(mandatory = True),
+        "picker": attr.bool(default = False, doc = "Run the local picker sidecar (0.15.x picking)."),
+        "_picker": attr.label(default = "//tools/atopile-picker:picker"),
         "frozen": attr.bool(default = True),
     },
     toolchains = [TOOLCHAIN_TYPE],

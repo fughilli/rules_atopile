@@ -30,4 +30,7 @@ atopile_project(
     # End-to-end with no human in the loop: headless-route the board (FreeRouting
     # via KiCad's pcbnew) so blinky.pdf shows real traces. See tools/autoroute.py.
     autoroute = True,
+    # atopile 0.15.x picks parts against a components API — run the local picker
+    # (tools/atopile-picker) as a sidecar so the build is self-contained.
+    picker = True,
 )
