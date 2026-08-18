@@ -15,6 +15,8 @@ Pipeline:
 Usage: <kicad-python> autoroute.py <pcb_path> <freerouting_cmd>
 """
 
+from __future__ import annotations
+
 import os
 import subprocess
 import sys

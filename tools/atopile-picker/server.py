@@ -31,6 +31,8 @@ Stdlib only (http.server/json) so it runs under the pinned nix python with no
 extra deps.
 """
 
+from __future__ import annotations
+
 import json
 import re
 import sys

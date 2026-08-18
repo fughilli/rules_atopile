@@ -26,6 +26,8 @@ UUID sentinel) and re-translates from the current placement, so it's safe to run
 on an already-processed board.
 """
 
+from __future__ import annotations
+
 import re
 import sys
 

@@ -31,7 +31,7 @@ let
   # reproducible (determinism pass in atopile.nix), so the pin holds.
   venvHashBySystem = {
     "aarch64-linux" = "sha256-AAXyNGp2PaQSfcQmwOakRUpkm6UF/irnUm7iqXjMaxo=";
-    "aarch64-darwin" = lib.fakeHash; # re-pin on the mac
+    "aarch64-darwin" = "sha256-xQkjTeRtl4SaigiZpNtGkRthm+l/pyKiGLrTZ05f2FU=";
   };
   venvHash = venvHashBySystem.${pkgs.stdenv.hostPlatform.system} or lib.fakeHash;
 in
