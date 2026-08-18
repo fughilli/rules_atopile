@@ -23,4 +23,8 @@ atopile_project(
     # To freeze instead, hand-place via `bazel run :blinky.view`, save, commit
     # the .kicad_pcb, and flip this to True. See rules doc §frozen.
     frozen = False,
+    # This 2-part board is placed at the origin with no outline, so a raw PDF is
+    # a near-blank A4 sheet. Frame it (outline + tight page, 4 mm margin) so
+    # blinky.pdf shows an actual board. See tools/board_outline.py.
+    outline_margin_mm = 4,
 )

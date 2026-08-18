@@ -165,6 +165,18 @@ def _atopile_pdf_impl(ctx):
     pcb = "elec/layout/{b}/{b}.kicad_pcb".format(b = ctx.attr.build)
     frozen = "--frozen" if ctx.attr.frozen else ""
 
+    # Optional: frame an auto-placed board (outline + tight page) so the export
+    # isn't a near-blank A4 sheet — see tools/board_outline.py. `> 0` enables it.
+    outline = ""
+    inputs = [_project_inputs(ctx, info)]
+    if ctx.attr.outline_margin_mm > 0:
+        inputs.append(depset([ctx.file._board_outline]))
+        outline = 'python3 "{s}" "$ROOT/{pcb}" {m}'.format(
+            s = ctx.file._board_outline.path,
+            pcb = pcb,
+            m = ctx.attr.outline_margin_mm,
+        )
+
     cmd = "\n".join([
         "set -euo pipefail",
         _home_export(),
@@ -173,6 +185,7 @@ def _atopile_pdf_impl(ctx):
         _path_export(info),
         _fp_table_setup(ctx),
         '( cd "$ROOT" && "$ATO" build -b {build} {frozen} )'.format(build = ctx.attr.build, frozen = frozen),
+        outline,
         '"{kc}" pcb export pdf "$ROOT/{pcb}" -o "{out}" --layers "{layers}"'.format(
             kc = _kicad_cmd(info),
             pcb = pcb,
@@ -183,7 +196,7 @@ def _atopile_pdf_impl(ctx):
 
     ctx.actions.run_shell(
         outputs = [out],
-        inputs = _project_inputs(ctx, info),
+        inputs = depset(transitive = inputs),
         command = cmd,
         mnemonic = "AtopilePdf",
         progress_message = "atopile board PDF -> %s" % out.short_path,
@@ -202,6 +215,16 @@ _atopile_pdf = rule(
         "out": attr.output(mandatory = True),
         "layers": attr.string(
             default = "F.Cu,B.Cu,F.Silkscreen,B.Silkscreen,F.Mask,B.Mask,Edge.Cuts",
+        ),
+        "outline_margin_mm": attr.int(
+            default = 0,
+            doc = "If > 0, frame the board with an Edge.Cuts outline + tight page " +
+                  "(mm margin) before export — for auto-placed boards with no " +
+                  "hand-drawn outline. See tools/board_outline.py.",
+        ),
+        "_board_outline": attr.label(
+            default = "//tools:board_outline.py",
+            allow_single_file = True,
         ),
         "frozen": attr.bool(default = True),
     },

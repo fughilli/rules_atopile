@@ -1,0 +1,7 @@
+# board_outline.py: post-build helper the PDF rule runs to frame an auto-placed
+# board (outline + tight page) so exports aren't a near-blank A4 sheet. Opt in
+# via `outline_margin_mm` on `atopile_project`.
+exports_files(
+    ["board_outline.py"],
+    visibility = ["//visibility:public"],
+)

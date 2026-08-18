@@ -48,6 +48,7 @@ def atopile_project(
         build = "default",
         deps = [],
         frozen = True,
+        outline_margin_mm = 0,
         visibility = None,
         tags = []):
     """Declare an atopile project and its build/export/view sub-targets.
@@ -59,6 +60,9 @@ def atopile_project(
       build: the build config to select (`ato build -b <build>`).
       deps: `atopile_library` targets whose modules this design imports.
       frozen: pass `--frozen` (forbid layout mutation) to artifact builds.
+      outline_margin_mm: if > 0, the `.pdf` target frames an auto-placed board
+        with an Edge.Cuts outline + tight page (this mm margin) so the export
+        isn't a near-blank A4 sheet. For hand-outlined boards leave it 0.
       visibility: standard Bazel visibility.
       tags: extra tags applied to every generated target.
     """
@@ -108,5 +112,6 @@ def atopile_project(
         name = name + ".pdf",
         out = outdir + ".pdf",
         frozen = frozen,
+        outline_margin_mm = outline_margin_mm,
         **common
     )

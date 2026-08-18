@@ -144,6 +144,12 @@ sheet** (`.kicad_sch`), so `.pdf` exports the **board layout** to PDF via
 thing to a schematic is the interactive block diagram — that's `.schematic`
 (`ato view --serve`).
 
+**Blank PDF?** An auto-placed board sits at the origin with no board outline, so
+a raw `.pdf` is a near-blank A4 sheet. Set `outline_margin_mm = <mm>` on
+`atopile_project` and the `.pdf` target frames the board (Edge.Cuts outline +
+tight `User` page) before export — see `tools/board_outline.py`. `blinky` uses
+`4`. Leave it `0` for a board you've outlined by hand.
+
 **Adding a new export target** = one row in `_ARTIFACTS` in
 `bazel/atopile/defs.bzl` (atopile target name + output suffix + source suffix).
 Valid atopile targets: `bom`, `glb`, `step`, `2d-image`, `3d-image`,
